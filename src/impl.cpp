@@ -4987,9 +4987,17 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                 region.bufferImageHeight ? region.bufferImageHeight : region.imageExtent.height
             };
 
+            // In particular required for the case of block compressed formats and non-multiple width/height fields.
+            // TODO: verify the align parts, not totally confident it's correct in all circumstances
+            auto up_align = [] (UINT v, UINT alignment) {
+                return (v + alignment - 1) & ~(alignment - 1);
+            };
+
             const auto byte_per_texel { dst_image->block_data.bits / 8 };
-            const auto num_rows { buffer_height / dst_image->block_data.height };
-            const auto raw_row_pitch { (buffer_width / dst_image->block_data.width) * byte_per_texel };
+            const auto num_rows { up_align(buffer_height, dst_image->block_data.height) / dst_image->block_data.height };
+            const auto raw_row_pitch {
+                (up_align(buffer_width, dst_image->block_data.width) / dst_image->block_data.width) * byte_per_texel
+            };
             const auto raw_slice_pitch { raw_row_pitch * num_rows };
             const auto offset { region.bufferOffset + (layer - base_layer) * raw_slice_pitch * depth };
 
@@ -5002,9 +5010,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
 
             if ((pitch_aligned || num_rows == 1)) {
                 // Interesting for the case of a single row, where we can just increase the pitch to whatever suites us
-                const auto single_row_pitch {
-                    (raw_row_pitch + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT-1) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT-1)
-                };
+                const auto single_row_pitch { up_align(raw_row_pitch, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) };
                 const auto row_pitch { num_rows > 1 ? raw_row_pitch : single_row_pitch };
                 const auto slice_pitch { row_pitch * num_rows };
 
@@ -5030,8 +5036,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                             offset,
                             D3D12_SUBRESOURCE_FOOTPRINT {
                                 dst_image->resource_desc.Format,
-                                width,
-                                height,
+                                up_align(width, dst_image->block_data.width),
+                                up_align(height, dst_image->block_data.height),
                                 depth,
                                 row_pitch,
                             }
@@ -5046,8 +5052,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                         &src_desc,
                         &D3D12_BOX {
                             0, 0, 0,
-                            region.imageExtent.width,
-                            region.imageExtent.height,
+                            up_align(region.imageExtent.width, dst_image->block_data.width),
+                            up_align(region.imageExtent.height, dst_image->block_data.height),
                             region.imageExtent.depth
                         }
                     );
@@ -5092,8 +5098,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                                 aligned_offset,
                                 D3D12_SUBRESOURCE_FOOTPRINT {
                                     dst_image->resource_desc.Format,
-                                    width + texel_offset_x,
-                                    height + texel_offset_y,
+                                    up_align(width + texel_offset_x, dst_image->block_data.width),
+                                    up_align(height + texel_offset_y, dst_image->block_data.height),
                                     depth + texel_offset_z,
                                     row_pitch,
                                 }
@@ -5107,9 +5113,11 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                             region.imageOffset.z,
                             &src_desc,
                             &D3D12_BOX {
-                                texel_offset_x, texel_offset_y, texel_offset_z,
-                                region.imageExtent.width + texel_offset_x,
-                                region.imageExtent.height + texel_offset_y,
+                                texel_offset_x & ~(dst_image->block_data.width - 1),
+                                texel_offset_y & ~(dst_image->block_data.height - 1),
+                                texel_offset_z,
+                                up_align(region.imageExtent.width + texel_offset_x, dst_image->block_data.width),
+                                up_align(region.imageExtent.height + texel_offset_y, dst_image->block_data.height),
                                 region.imageExtent.depth + texel_offset_z,
                             }
                         );
@@ -5123,12 +5131,15 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                                     D3D12_SUBRESOURCE_FOOTPRINT {
                                         dst_image->resource_desc.Format,
                                         row_pitch_texels,
-                                        height + texel_offset_y,
-                                        depth + texel_offset_z,
+                                        up_align(height + texel_offset_y, dst_image->block_data.width),
+                                        up_align(depth + texel_offset_z, dst_image->block_data.height),
                                         row_pitch,
                                     }
                                 }
                             };
+
+                            const auto left { up_align(texel_offset_x, dst_image->block_data.width) };
+                            const auto top { up_align(texel_offset_y, dst_image->block_data.height) };
 
                             (*command_buffer)->CopyTextureRegion(
                                 &dst_desc,
@@ -5137,9 +5148,9 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                                 region.imageOffset.z,
                                 &src_desc,
                                 &D3D12_BOX {
-                                    texel_offset_x, texel_offset_y, texel_offset_z,
-                                    row_pitch_texels,
-                                    region.imageExtent.height + texel_offset_y,
+                                    left, top, texel_offset_z,
+                                    up_align(row_pitch_texels, dst_image->block_data.width),
+                                    up_align(region.imageExtent.height + top, dst_image->block_data.height),
                                     region.imageExtent.depth + texel_offset_z,
                                 }
                             );
@@ -5152,13 +5163,15 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                                     aligned_offset,
                                     D3D12_SUBRESOURCE_FOOTPRINT {
                                         dst_image->resource_desc.Format,
-                                        width - row_pitch_texels + texel_offset_x,
-                                        height + texel_offset_y + 1,
+                                        up_align(width - row_pitch_texels + texel_offset_x, dst_image->block_data.width),
+                                        up_align(height + texel_offset_y + 1, dst_image->block_data.height),
                                         depth + texel_offset_z,
                                         row_pitch,
                                     }
                                 }
                             };
+
+                            const auto top { up_align(texel_offset_y + 1, dst_image->block_data.height) };
 
                             (*command_buffer)->CopyTextureRegion(
                                 &dst_desc,
@@ -5168,10 +5181,10 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                                 &src_desc,
                                 &D3D12_BOX {
                                     0,
-                                    texel_offset_y + 1,
+                                    top,
                                     texel_offset_z,
-                                    width - row_pitch_texels + texel_offset_x,
-                                    region.imageExtent.height + texel_offset_y + 1,
+                                    up_align(width - row_pitch_texels + texel_offset_x, dst_image->block_data.width),
+                                    up_align(region.imageExtent.height + top, dst_image->block_data.height),
                                     region.imageExtent.depth + texel_offset_z,
                                 }
                             );
