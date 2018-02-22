@@ -4966,6 +4966,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
         UINT slice_pitch;
         UINT mip_level;
         UINT array_layer;
+        UINT bits_format;
         VkExtent3D extent;
     };
     std::vector<cs_copy_region> cs_regions {};
@@ -5204,6 +5205,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                         raw_slice_pitch,
                         level,
                         layer,
+                        dst_image->block_data.bits,
                         region.imageExtent,
                     }
                 );
@@ -5263,19 +5265,19 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
 
         D3D12_CPU_DESCRIPTOR_HANDLE cur_uav { start_cpu.ptr + i * handle_size };
 
-        /*
-        D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc {
-            DXGI_FORMAT_R32_UINT,
-            D3D12_UAV_DIMENSION_TEXTURE2DARRAY
-        };
-        uav_desc.Texture2DArray = D3D12_TEX2D_ARRAY_UAV { region.mip_level, region.array_layer, 1, 0 };
-        command_buffer->device->CreateUnorderedAccessView(
-            dst_image->resource.Get(),
-            nullptr,
-            &uav_desc,
-            cur_uav
-        );
-        */
+        if (region.bits_format == 32) {
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc {
+                DXGI_FORMAT_R32_UINT,
+                D3D12_UAV_DIMENSION_TEXTURE2DARRAY
+            };
+            uav_desc.Texture2DArray = D3D12_TEX2D_ARRAY_UAV { region.mip_level, region.array_layer, 1, 0 };
+            command_buffer->device->CreateUnorderedAccessView(
+                dst_image->resource.Get(),
+                nullptr,
+                &uav_desc,
+                cur_uav
+            );
+        }
 
         (*command_buffer)->SetComputeRootShaderResourceView(0, src_buffer->resource->GetGPUVirtualAddress());
         (*command_buffer)->SetComputeRootDescriptorTable(
