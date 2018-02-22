@@ -1,0 +1,9 @@
+[submodule "deps/spirv-cross"]
+	path = deps/spirv-cross
+	url = https://github.com/KhronosGroup/SPIRV-Cross.git
+[submodule "deps/gsl"]
+	path = deps/gsl
+	url = https://github.com/Microsoft/GSL.git
+[submodule "deps/spdlog"]
+	path = deps/spdlog
+	url = https://github.com/gabime/spdlog.git
