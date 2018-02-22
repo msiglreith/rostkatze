@@ -1,6 +1,7 @@
 [submodule "deps/spirv-cross"]
 	path = deps/spirv-cross
-	url = https://github.com/KhronosGroup/SPIRV-Cross.git
+	url = https://github.com/msiglreith/SPIRV-Cross.git
+    branch = rostkatze
 [submodule "deps/gsl"]
 	path = deps/gsl
 	url = https://github.com/Microsoft/GSL.git

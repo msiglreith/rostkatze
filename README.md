@@ -46,6 +46,7 @@ Good luck!
 - bloom
 - computeshader
 - distancefieldrendering
+- offscreen
 
 ## Partially working
 
@@ -58,7 +59,6 @@ Good luck!
 - pushconstants (push constant array members)
 - skeletalanimation (inverse)
 - ssao (inverse, spec constants in array, ?)
-- offscreen (clipdistance builtin)
 - instancing (inverse, ?)
 
 ## SPIRV-Cross issues
