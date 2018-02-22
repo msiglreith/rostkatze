@@ -13,18 +13,18 @@ extern std::array<DXGI_FORMAT, VK_FORMAT_RANGE_SIZE> formats {
     DXGI_FORMAT_UNKNOWN, // B5G5R5A1_UNORM_PACK16
     DXGI_FORMAT_UNKNOWN, // A1R5G5B5_UNORM_PACK16
     DXGI_FORMAT_R8_UNORM, // R8_UNORM
-    DXGI_FORMAT_UNKNOWN, // R8_SNORM
+    DXGI_FORMAT_R8_SNORM, // R8_SNORM
     DXGI_FORMAT_UNKNOWN, // R8_USCALED
     DXGI_FORMAT_UNKNOWN, // R8_SSCALED
-    DXGI_FORMAT_UNKNOWN, // R8_UINT
-    DXGI_FORMAT_UNKNOWN, // R8_SINT
+    DXGI_FORMAT_R8_UINT, // R8_UINT
+    DXGI_FORMAT_R8_SINT, // R8_SINT
     DXGI_FORMAT_UNKNOWN, // R8_SRGB
-    DXGI_FORMAT_UNKNOWN, // R8G8_UNORM
-    DXGI_FORMAT_UNKNOWN, // R8G8_SNORM
+    DXGI_FORMAT_R8G8_UNORM, // R8G8_UNORM
+    DXGI_FORMAT_R8G8_SNORM, // R8G8_SNORM
     DXGI_FORMAT_UNKNOWN, // R8G8_USCALED
     DXGI_FORMAT_UNKNOWN, // R8G8_SSCALED
-    DXGI_FORMAT_UNKNOWN, // R8G8_UINT
-    DXGI_FORMAT_UNKNOWN, // R8G8_SINT
+    DXGI_FORMAT_R8G8_UINT, // R8G8_UINT
+    DXGI_FORMAT_R8G8_SINT, // R8G8_SINT
     DXGI_FORMAT_UNKNOWN, // R8G8_SRGB
     DXGI_FORMAT_UNKNOWN, // R8G8B8_UNORM
     DXGI_FORMAT_UNKNOWN, // R8G8B8_SNORM
@@ -191,7 +191,7 @@ extern std::array<DXGI_FORMAT, VK_FORMAT_RANGE_SIZE> formats {
 };
 
 std::array<format_block_t, VK_FORMAT_RANGE_SIZE> formats_block {{
-    { }, // UNDEFINED
+    { 0, 0, 0 }, // UNDEFINED
     { }, // R4G4_UNORM_PACK8
     { }, // R4G4B4A4_UNORM_PACK16
     { }, // B4G4R4A4_UNORM_PACK16
@@ -201,91 +201,91 @@ std::array<format_block_t, VK_FORMAT_RANGE_SIZE> formats_block {{
     { }, // B5G5R5A1_UNORM_PACK16
     { }, // A1R5G5B5_UNORM_PACK16
     { 1, 1, 8 }, // R8_UNORM
-    { }, // R8_SNORM
-    { }, // R8_USCALED
-    { }, // R8_SSCALED
-    { }, // R8_UINT
-    { }, // R8_SINT
-    { }, // R8_SRGB
-    { }, // R8G8_UNORM
-    { }, // R8G8_SNORM
-    { }, // R8G8_USCALED
-    { }, // R8G8_SSCALED
-    { }, // R8G8_UINT
-    { }, // R8G8_SINT
-    { }, // R8G8_SRGB
-    { }, // R8G8B8_UNORM
-    { }, // R8G8B8_SNORM
-    { }, // R8G8B8_USCALED
-    { }, // R8G8B8_SSCALED
-    { }, // R8G8B8_UINT
-    { }, // R8G8B8_SINT
-    { }, // R8G8B8_SRGB
-    { }, // B8G8R8_UNORM
-    { }, // B8G8R8_SNORM
-    { }, // B8G8R8_USCALED
-    { }, // B8G8R8_SSCALED
-    { }, // B8G8R8_UINT
-    { }, // B8G8R8_SINT
-    { }, // B8G8R8_SRGB
+    { 1, 1, 8 }, // R8_SNORM
+    { 1, 1, 8 }, // R8_USCALED
+    { 1, 1, 8 }, // R8_SSCALED
+    { 1, 1, 8 }, // R8_UINT
+    { 1, 1, 8 }, // R8_SINT
+    { 1, 1, 8 }, // R8_SRGB
+    { 1, 1, 16 }, // R8G8_UNORM
+    { 1, 1, 16 }, // R8G8_SNORM
+    { 1, 1, 16 }, // R8G8_USCALED
+    { 1, 1, 16 }, // R8G8_SSCALED
+    { 1, 1, 16 }, // R8G8_UINT
+    { 1, 1, 16 }, // R8G8_SINT
+    { 1, 1, 16 }, // R8G8_SRGB
+    { 1, 1, 24 }, // R8G8B8_UNORM
+    { 1, 1, 24 }, // R8G8B8_SNORM
+    { 1, 1, 24 }, // R8G8B8_USCALED
+    { 1, 1, 24 }, // R8G8B8_SSCALED
+    { 1, 1, 24 }, // R8G8B8_UINT
+    { 1, 1, 24 }, // R8G8B8_SINT
+    { 1, 1, 24 }, // R8G8B8_SRGB
+    { 1, 1, 24 }, // B8G8R8_UNORM
+    { 1, 1, 24 }, // B8G8R8_SNORM
+    { 1, 1, 24 }, // B8G8R8_USCALED
+    { 1, 1, 24 }, // B8G8R8_SSCALED
+    { 1, 1, 24 }, // B8G8R8_UINT
+    { 1, 1, 24 }, // B8G8R8_SINT
+    { 1, 1, 24 }, // B8G8R8_SRGB
     { 1, 1, 32 }, // R8G8B8A8_UNORM
-    { }, // R8G8B8A8_SNORM
-    { }, // R8G8B8A8_USCALED
-    { }, // R8G8B8A8_SSCALED
-    { }, // R8G8B8A8_UINT
-    { }, // R8G8B8A8_SINT
-    { }, // R8G8B8A8_SRGB
+    { 1, 1, 32 }, // R8G8B8A8_SNORM
+    { 1, 1, 32 }, // R8G8B8A8_USCALED
+    { 1, 1, 32 }, // R8G8B8A8_SSCALED
+    { 1, 1, 32 }, // R8G8B8A8_UINT
+    { 1, 1, 32 }, // R8G8B8A8_SINT
+    { 1, 1, 32 }, // R8G8B8A8_SRGB
     { 1, 1, 32 }, // B8G8R8A8_UNORM
-    { }, // B8G8R8A8_SNORM
-    { }, // B8G8R8A8_USCALED
-    { }, // B8G8R8A8_SSCALED
-    { }, // B8G8R8A8_UINT
-    { }, // B8G8R8A8_SINT
+    { 1, 1, 32 }, // B8G8R8A8_SNORM
+    { 1, 1, 32 }, // B8G8R8A8_USCALED
+    { 1, 1, 32 }, // B8G8R8A8_SSCALED
+    { 1, 1, 32 }, // B8G8R8A8_UINT
+    { 1, 1, 32 }, // B8G8R8A8_SINT
     { 1, 1, 32 }, // B8G8R8A8_SRGB
-    { }, // A8B8G8R8_UNORM_PACK32
-    { }, // A8B8G8R8_SNORM_PACK32
-    { }, // A8B8G8R8_USCALED_PACK32
-    { }, // A8B8G8R8_SSCALED_PACK32
-    { }, // A8B8G8R8_UINT_PACK32
-    { }, // A8B8G8R8_SINT_PACK32
-    { }, // A8B8G8R8_SRGB_PACK32
-    { }, // A2R10G10B10_UNORM_PACK32
-    { }, // A2R10G10B10_SNORM_PACK32
-    { }, // A2R10G10B10_USCALED_PACK32
-    { }, // A2R10G10B10_SSCALED_PACK32
-    { }, // A2R10G10B10_UINT_PACK32
-    { }, // A2R10G10B10_SINT_PACK32
-    { }, // A2B10G10R10_UNORM_PACK32
-    { }, // A2B10G10R10_SNORM_PACK32
-    { }, // A2B10G10R10_USCALED_PACK32
-    { }, // A2B10G10R10_SSCALED_PACK32
-    { }, // A2B10G10R10_UINT_PACK32
-    { }, // A2B10G10R10_SINT_PACK32
-    { }, // R16_UNORM
-    { }, // R16_SNORM
-    { }, // R16_USCALED
-    { }, // R16_SSCALED
-    { }, // R16_UINT
-    { }, // R16_SINT
-    { }, // R16_SFLOAT
-    { }, // R16G16_UNORM
-    { }, // R16G16_SNORM
-    { }, // R16G16_USCALED
-    { }, // R16G16_SSCALED
-    { }, // R16G16_UINT
-    { }, // R16G16_SINT
+    { 1, 1, 32 }, // A8B8G8R8_UNORM_PACK32
+    { 1, 1, 32 }, // A8B8G8R8_SNORM_PACK32
+    { 1, 1, 32 }, // A8B8G8R8_USCALED_PACK32
+    { 1, 1, 32 }, // A8B8G8R8_SSCALED_PACK32
+    { 1, 1, 32 }, // A8B8G8R8_UINT_PACK32
+    { 1, 1, 32 }, // A8B8G8R8_SINT_PACK32
+    { 1, 1, 32 }, // A8B8G8R8_SRGB_PACK32
+    { 1, 1, 32 }, // A2R10G10B10_UNORM_PACK32
+    { 1, 1, 32 }, // A2R10G10B10_SNORM_PACK32
+    { 1, 1, 32 }, // A2R10G10B10_USCALED_PACK32
+    { 1, 1, 32 }, // A2R10G10B10_SSCALED_PACK32
+    { 1, 1, 32 }, // A2R10G10B10_UINT_PACK32
+    { 1, 1, 32 }, // A2R10G10B10_SINT_PACK32
+    { 1, 1, 32 }, // A2B10G10R10_UNORM_PACK32
+    { 1, 1, 32 }, // A2B10G10R10_SNORM_PACK32
+    { 1, 1, 32 }, // A2B10G10R10_USCALED_PACK32
+    { 1, 1, 32 }, // A2B10G10R10_SSCALED_PACK32
+    { 1, 1, 32 }, // A2B10G10R10_UINT_PACK32
+    { 1, 1, 32 }, // A2B10G10R10_SINT_PACK32
+    { 1, 1, 16 }, // R16_UNORM
+    { 1, 1, 16 }, // R16_SNORM
+    { 1, 1, 16 }, // R16_USCALED
+    { 1, 1, 16 }, // R16_SSCALED
+    { 1, 1, 16 }, // R16_UINT
+    { 1, 1, 16 }, // R16_SINT
+    { 1, 1, 16 }, // R16_SFLOAT
+    { 1, 1, 32 }, // R16G16_UNORM
+    { 1, 1, 32 }, // R16G16_SNORM
+    { 1, 1, 32 }, // R16G16_USCALED
+    { 1, 1, 32 }, // R16G16_SSCALED
+    { 1, 1, 32 }, // R16G16_UINT
+    { 1, 1, 32 }, // R16G16_SINT
     { 1, 1, 32 }, // R16G16_SFLOAT
-    { }, // R16G16B16_UNORM
-    { }, // R16G16B16_SNORM
-    { }, // R16G16B16_USCALED
-    { }, // R16G16B16_SSCALED
-    { }, // R16G16B16_UINT
-    { }, // R16G16B16_SINT
-    { }, // R16G16B16_SFLOAT
-    { }, // R16G16B16A16_UNORM
-    { }, // R16G16B16A16_SNORM
-    { }, // R16G16B16A16_USCALED
-    { }, // R16G16B16A16_SSCALED
+    { 1, 1, 48 }, // R16G16B16_UNORM
+    { 1, 1, 48 }, // R16G16B16_SNORM
+    { 1, 1, 48 }, // R16G16B16_USCALED
+    { 1, 1, 48 }, // R16G16B16_SSCALED
+    { 1, 1, 48 }, // R16G16B16_UINT
+    { 1, 1, 48 }, // R16G16B16_SINT
+    { 1, 1, 48 }, // R16G16B16_SFLOAT
+    { 1, 1, 64 }, // R16G16B16A16_UNORM
+    { 1, 1, 64 }, // R16G16B16A16_SNORM
+    { 1, 1, 64 }, // R16G16B16A16_USCALED
+    { 1, 1, 64 }, // R16G16B16A16_SSCALED
     { 1, 1, 64 }, // R16G16B16A16_UINT
     { 1, 1, 64 }, // R16G16B16A16_SINT
     { 1, 1, 64 }, // R16G16B16A16_SFLOAT
@@ -301,9 +301,9 @@ std::array<format_block_t, VK_FORMAT_RANGE_SIZE> formats_block {{
     { 1, 1, 128 }, // R32G32B32A32_UINT
     { 1, 1, 128 }, // R32G32B32A32_SINT
     { 1, 1, 128 }, // R32G32B32A32_SFLOAT
-    { }, // R64_UINT
-    { }, // R64_SINT
-    { }, // R64_SFLOAT
+    { 1, 1, 64 }, // R64_UINT
+    { 1, 1, 64 }, // R64_SINT
+    { 1, 1, 64 }, // R64_SFLOAT
     { }, // R64G64_UINT
     { }, // R64G64_SINT
     { }, // R64G64_SFLOAT
@@ -379,7 +379,7 @@ std::array<format_block_t, VK_FORMAT_RANGE_SIZE> formats_block {{
 }};
 
 std::array<VkFormatProperties, VK_FORMAT_RANGE_SIZE> formats_property {{
-    { }, // UNDEFINED
+    { 0, 0, 0 }, // UNDEFINED
     { }, // R4G4_UNORM_PACK8
     { }, // R4G4B4A4_UNORM_PACK16
     { }, // B4G4R4A4_UNORM_PACK16
@@ -416,7 +416,7 @@ std::array<VkFormatProperties, VK_FORMAT_RANGE_SIZE> formats_property {{
     { }, // B8G8R8_UINT
     { }, // B8G8R8_SINT
     { }, // B8G8R8_SRGB
-    { 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, 0}, // R8G8B8A8_UNORM
+    { 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, 0 }, // R8G8B8A8_UNORM
     { }, // R8G8B8A8_SNORM
     { }, // R8G8B8A8_USCALED
     { }, // R8G8B8A8_SSCALED
