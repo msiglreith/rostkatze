@@ -509,14 +509,11 @@ struct shader_module_t {
 };
 
 enum dynamic_state_flags {
-    DYNAMIC_STATE_VIEWPORT = 0x1,
-    DYNAMIC_STATE_SCISSOR = 0x2,
-    DYNAMIC_STATE_DEPTH_BIAS = 0x4,
-    DYNAMIC_STATE_BLEND_CONSTANTS = 0x8,
-    DYNAMIC_STATE_DEPTH_BOUNDS = 0x10,
-    DYNAMIC_STATE_STENCIL_COMPARE_MASK = 0x20,
-    DYNAMIC_STATE_STENCIL_WRITE_MASK = 0x40,
-    DYNAMIC_STATE_STENCIL_REFERENCE = 0x80,
+    DYNAMIC_STATE_DEPTH_BIAS = 0x1,
+    DYNAMIC_STATE_DEPTH_BOUNDS = 0x2,
+    DYNAMIC_STATE_STENCIL_COMPARE_MASK = 0x4,
+    DYNAMIC_STATE_STENCIL_WRITE_MASK = 0x8,
+    DYNAMIC_STATE_PRIMITIVE_RESTART = 0x10,
 };
 using dynamic_states_t = uint32_t;
 
@@ -533,18 +530,23 @@ struct blend_factors_t {
     FLOAT factors[4];
 };
 
-enum class strip_cut {
-    U32,
-    U16,
-};
-
 struct pipeline_t {
+    pipeline_t() :
+        signature { nullptr },
+        num_signature_entries { 0 },
+        num_root_constants { 0 },
+        dynamic_states { 0 },
+        static_viewports { std::nullopt },
+        static_scissors { std::nullopt },
+        static_blend_factors { std::nullopt },
+        static_depth_bounds { std::nullopt },
+        static_stencil_reference { std::nullopt }
+    {}
+
+    // There is only a single pipeline, no need for dynamic creation
+    // Compute pipelines and graphics pipeline without primitive restart and dynamic states
     struct unique_pso {
         ComPtr<ID3D12PipelineState> pipeline;
-    };
-
-    struct static_pso {
-        std::unordered_map<strip_cut, ComPtr<ID3D12PipelineState>> pipelines;
     };
 
     // Pipeline with dynamic states
@@ -554,12 +556,15 @@ struct pipeline_t {
     //  - Depth bounds are dynamic per se (if supported)
     //  - Stencil ref is dynamic per se
     //  - Index primitive restart value must be set dynamically
+    //
+    // Access to these pipelines need to be ensured by `pso_access`.
     struct dynamic_pso {
         std::unordered_map<dynamic_state_t, ComPtr<ID3D12PipelineState>> pipelines;
     };
 
     // Shared by compute and graphics
-    std::variant<unique_pso, static_pso, dynamic_pso> pso;
+    std::variant<unique_pso, dynamic_pso> pso;
+    // Required for accessing
     std::shared_mutex pso_access;
     ID3D12RootSignature* signature;
 
@@ -576,7 +581,7 @@ struct pipeline_t {
 
     dynamic_state_t static_state;
     std::optional<std::vector<D3D12_VIEWPORT>> static_viewports;
-    std::optional<std::vector<D3D12_RECT>> static_rects;
+    std::optional<std::vector<D3D12_RECT>> static_scissors;
     std::optional<blend_factors_t> static_blend_factors;
     std::optional<std::tuple<FLOAT, FLOAT>> static_depth_bounds;
     std::optional<UINT> static_stencil_reference;
@@ -775,9 +780,6 @@ public:
                     stdx::match(
                         [] (pipeline_t::unique_pso& pso) {
                             return pso.pipeline.Get();
-                        },
-                        [] (pipeline_t::static_pso& pso) {
-                            return static_cast<ID3D12PipelineState *>(nullptr); // TODO
                         },
                         [] (pipeline_t::dynamic_pso& pso) {
                             return static_cast<ID3D12PipelineState *>(nullptr); // TODO
@@ -3085,7 +3087,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         auto render_pass { reinterpret_cast<render_pass_t *>(info.renderPass) };
         auto const& subpass { render_pass->subpasses[info.subpass] };
 
-        auto pipeline = new pipeline_t;
+        auto pipeline = new pipeline_t();
 
         // Compile shaders
         auto stages { span<const VkPipelineShaderStageCreateInfo>(info.pStages, info.stageCount) };
@@ -3406,8 +3408,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
             depth_stencil_desc.StencilWriteMask = depth_stencil_state.front.writeMask; // PORTABILITY: front == back
             depth_stencil_desc.FrontFace = stencil_op_state(depth_stencil_state.front);
             depth_stencil_desc.BackFace = stencil_op_state(depth_stencil_state.back);
-
-            // TODO: stencil ref
         }
 
         // dynamic states
@@ -3419,6 +3419,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         };
 
         dynamic_states_t dynamic_states = 0;
+        bool static_viewports { true };
+        bool static_scissors { true };
+
         if (info.pDynamicState) {
             auto const& dynamic_state { *info.pDynamicState };
             auto states {
@@ -3427,22 +3430,54 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
 
             for (auto const& state : states) {
                 switch (state) {
-                    case VK_DYNAMIC_STATE_VIEWPORT: dynamic_states |= DYNAMIC_STATE_VIEWPORT; break;
-                    case VK_DYNAMIC_STATE_SCISSOR: dynamic_states |= DYNAMIC_STATE_SCISSOR; break;
-                    case VK_DYNAMIC_STATE_LINE_WIDTH: break; // line width must be 1.0 always
                     case VK_DYNAMIC_STATE_DEPTH_BIAS: dynamic_states |= DYNAMIC_STATE_DEPTH_BIAS; break;
-                    case VK_DYNAMIC_STATE_BLEND_CONSTANTS: dynamic_states |= DYNAMIC_STATE_BLEND_CONSTANTS; break;
                     case VK_DYNAMIC_STATE_DEPTH_BOUNDS: dynamic_states |= DYNAMIC_STATE_DEPTH_BOUNDS; break;
                     case VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK: dynamic_states |= DYNAMIC_STATE_STENCIL_COMPARE_MASK; break;
                     case VK_DYNAMIC_STATE_STENCIL_WRITE_MASK: dynamic_states |= DYNAMIC_STATE_STENCIL_WRITE_MASK; break;
-                    case VK_DYNAMIC_STATE_STENCIL_REFERENCE: dynamic_states |= DYNAMIC_STATE_STENCIL_REFERENCE; break;
+
+                    case VK_DYNAMIC_STATE_VIEWPORT: static_viewports = false; break;
                 }
             }
         }
+        if (primitive_restart) {
+            dynamic_states |= DYNAMIC_STATE_PRIMITIVE_RESTART;
+        }
+
+        if (static_viewports || static_scissors) {
+            auto const& viewport_state { *info.pViewportState };
+
+            if (static_viewports) {
+                auto vk_viewports { span<const VkViewport>(viewport_state.pViewports, viewport_state.viewportCount) };
+
+                std::vector<D3D12_VIEWPORT> viewports;
+                for (auto const& vp : vk_viewports) {
+                    viewports.emplace_back(
+                        D3D12_VIEWPORT { vp.x, vp.y, vp.width, vp.height, vp.minDepth, vp.maxDepth }
+                    );
+                }
+                pipeline->static_viewports = viewports;
+            }
+
+            if (static_scissors) {
+                auto vk_scissors { span<const VkRect2D>(viewport_state.pScissors, viewport_state.scissorCount) };
+
+                std::vector<D3D12_RECT> scissors;
+                for (auto const& scissor : vk_scissors) {
+                    scissors.emplace_back(
+                        D3D12_RECT {
+                            scissor.offset.x,
+                            scissor.offset.y,
+                            static_cast<LONG>(scissor.offset.x + scissor.extent.width),
+                            static_cast<LONG>(scissor.offset.y + scissor.extent.height),
+                        }
+                    );
+                }
+                pipeline->static_scissors = scissors;
+            }
+        }
+
         // Indicate if we have a truly dynamic pso
-        const auto dynamic_pso {
-            (dynamic_states & (DYNAMIC_STATE_DEPTH_BIAS | DYNAMIC_STATE_BLEND_CONSTANTS | DYNAMIC_STATE_STENCIL_COMPARE_MASK | DYNAMIC_STATE_STENCIL_WRITE_MASK)) != 0
-        };
+        const auto dynamic_pso { dynamic_states != 0 };
 
         const auto num_render_targets { subpass.color_attachments.size() };
 
@@ -3485,18 +3520,10 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         auto const hr { (*device)->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso)) };
         // TODO: error handling
 
-        const auto is_unique { !dynamic_pso && !primitive_restart };
-        if (is_unique) {
+        if (!dynamic_pso) {
             pipeline->pso = pipeline_t::unique_pso { pso };
-        } else if (dynamic_pso) {
-            // TODO
         } else {
-            const auto cut_value {
-                index_strip_cut == D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF ?
-                    strip_cut::U16 :
-                    strip_cut::U32
-            };
-            pipeline->pso = pipeline_t::static_pso {{{ cut_value, pso }}};
+            // TODO
         }
 
         pipeline->signature = signature;
@@ -4628,6 +4655,22 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
             for (auto i : range(MAX_VERTEX_BUFFER_SLOTS)) {
                 command_buffer->vertex_buffer_views[i].StrideInBytes = pipeline->vertex_strides[i];
             }
+
+            // Apply static states
+            if (pipeline->static_viewports) {
+                (*command_buffer)->RSSetViewports(
+                    pipeline->static_viewports->size(),
+                    pipeline->static_viewports->data()
+                );
+                command_buffer->viewports_dirty = false;
+            }
+            if (pipeline->static_scissors) {
+                (*command_buffer)->RSSetScissorRects(
+                    pipeline->static_scissors->size(),
+                    pipeline->static_scissors->data()
+                );
+                command_buffer->scissors_dirty = false;
+            }
         } break;
         case VK_PIPELINE_BIND_POINT_COMPUTE: {
             if (!command_buffer->active_slot) {
@@ -5251,8 +5294,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
 
                         (*command_buffer)->CopyTextureRegion(
                             &dst_desc,
-                            region.imageOffset.x,
-                            region.imageOffset.y,
+                            region.imageOffset.x & ~(dst_image->block_data.width - 1),
+                            region.imageOffset.y & ~(dst_image->block_data.height - 1),
                             region.imageOffset.z,
                             &src_desc,
                             &D3D12_BOX {
@@ -5286,8 +5329,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
 
                             (*command_buffer)->CopyTextureRegion(
                                 &dst_desc,
-                                region.imageOffset.x,
-                                region.imageOffset.y,
+                                region.imageOffset.x & ~(dst_image->block_data.width - 1),
+                                region.imageOffset.y & ~(dst_image->block_data.height - 1),
                                 region.imageOffset.z,
                                 &src_desc,
                                 &D3D12_BOX {
@@ -5318,8 +5361,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
 
                             (*command_buffer)->CopyTextureRegion(
                                 &dst_desc,
-                                region.imageOffset.x + row_pitch_texels - texel_offset_x,
-                                region.imageOffset.y,
+                                (region.imageOffset.x + row_pitch_texels - texel_offset_x)  & ~(dst_image->block_data.width - 1),
+                                region.imageOffset.y & ~(dst_image->block_data.height - 1),
                                 region.imageOffset.z,
                                 &src_desc,
                                 &D3D12_BOX {
