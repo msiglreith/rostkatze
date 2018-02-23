@@ -377,8 +377,10 @@ public:
             limits.maxImageDimension2D = D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION;
             limits.maxImageDimension3D = D3D12_REQ_TEXTURE3D_U_V_OR_W_DIMENSION;
             limits.maxImageDimensionCube = D3D12_REQ_TEXTURECUBE_DIMENSION;
-
+            // TODO: missing fields
             limits.maxPushConstantsSize = 4 * D3D12_MAX_ROOT_COST;
+            // TODO: missing fields
+            limits.maxComputeSharedMemorySize = D3D12_CS_THREAD_LOCAL_TEMP_REGISTER_POOL;
 
             adapters.emplace_back(adapter_info_t { adapter, memory_properties, heap_properties, limits });
         }
@@ -1210,6 +1212,14 @@ public:
         switch (format) {
             case DXGI_FORMAT_D16_UNORM: format = DXGI_FORMAT_R16_UNORM; break;
             case DXGI_FORMAT_D32_FLOAT: format = DXGI_FORMAT_R32_FLOAT; break;
+            case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: {
+                // Single bit only for SRV (descriptor set only view)
+                if (range.aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) {
+                    format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+                } else {
+                    format = DXGI_FORMAT_X32_TYPELESS_G8X24_UINT;
+                }
+            } break;
         }
 
         D3D12_SHADER_RESOURCE_VIEW_DESC desc { format };
@@ -1534,7 +1544,8 @@ auto translate_spirv (
         spirv_cross::CompilerHLSL compiler { module->spirv.data(), module->spirv.size() };
         compiler.set_options(spirv_cross::CompilerHLSL::Options {
             51, // shader model 5.1
-            true // point size builtin
+            true, // point size builtin
+            true, // point coord builtin
         });
         spirv_cross::CompilerGLSL::Options glsl_options;
         glsl_options.vertex.flip_vert_y = true;

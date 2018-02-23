@@ -28,42 +28,54 @@ Good luck!
 ## "Working" samples (SaschaWillems)
 
 - triangle
+- pipelines
+- texture
 - texturearray
 - mesh
-- vulkanscene
-- gears
-- pipelines
 - specialization constants
+- offscreen
+- radialblur
+- textoverlay
+- particlefire (small particles only)
+- scenerendering
+- HDR
+- shadowmappingcascade
+- shadowmappingomni
+- skeletalanimation
+- bloom
+- deferred
 - pbrbasic
 - pbribl
 - pbrtexture
-- scenerendering
-- shadowmappingcascade
-- sphericalenvmapping
-- imgui
-- shadowmappingomni
-- radialblur
-- bloom
+- computeshaderparticles
 - computeshader
+- sphericalenvmapping
+- gears
 - distancefieldrendering
-- offscreen
+- vulkanscene
+- imgui
 
 ## Partially working
 
-- texture (inverse)
 - shadowmapping (dynamic depth bias missing)
 - computecloth (bugs)
-
-# Almost working
-
+- ssao (bugs)
 - pushconstants (push constant array members)
-- skeletalanimation (inverse)
-- ssao (inverse, spec constants in array, ?)
+
+# Almost/Not working
+
+- texturecubmap (texture copy alignment)
+- multithreading (seconday buffers not implemented)
+- dynamic uniform buffers (not implemented)
 - instancing (inverse, ?)
+- indirect drawing (not implemented)
+- occlusion queries (not implemented)
+- mipmap gen (not implemented)
+- multisampling (not implemented)
+- deferred shadows (geometry shader support)
+- n-body (bug either in spirv-cross or samples)
+- raytracing (reading structs from byteaddressbuffer not supported)
+- culllod (indirect drawing, ..)
+- parallax (samples bug?)
 
-## SPIRV-Cross issues
-
-- `inverse`
-- Missing decorations for struct member fields
-- spec constants in arrays
-- pointcoord builtin not supported (even with compat mode)
+- All tessellation and geometry samples
