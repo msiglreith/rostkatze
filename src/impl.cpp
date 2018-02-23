@@ -510,10 +510,9 @@ struct shader_module_t {
 
 enum dynamic_state_flags {
     DYNAMIC_STATE_DEPTH_BIAS = 0x1,
-    DYNAMIC_STATE_DEPTH_BOUNDS = 0x2,
-    DYNAMIC_STATE_STENCIL_COMPARE_MASK = 0x4,
-    DYNAMIC_STATE_STENCIL_WRITE_MASK = 0x8,
-    DYNAMIC_STATE_PRIMITIVE_RESTART = 0x10,
+    DYNAMIC_STATE_STENCIL_COMPARE_MASK = 0x2,
+    DYNAMIC_STATE_STENCIL_WRITE_MASK = 0x4,
+    DYNAMIC_STATE_PRIMITIVE_RESTART = 0x8,
 };
 using dynamic_states_t = uint32_t;
 
@@ -3130,6 +3129,70 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         auto const& rasterization_state { *info.pRasterizationState };
         auto const& input_assembly { *info.pInputAssemblyState };
 
+        // Dynamic states
+        dynamic_states_t dynamic_states = 0;
+        auto static_blend_factors { true };
+        auto static_depth_bounds { true };
+        auto static_stencil_reference { true };
+        if (info.pDynamicState) {
+            auto const& dynamic_state { *info.pDynamicState };
+            auto states {
+                span<const VkDynamicState>(dynamic_state.pDynamicStates, dynamic_state.dynamicStateCount)
+            };
+
+            for (auto const& state : states) {
+                switch (state) {
+                    case VK_DYNAMIC_STATE_DEPTH_BIAS: dynamic_states |= DYNAMIC_STATE_DEPTH_BIAS; break;
+                    case VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK: dynamic_states |= DYNAMIC_STATE_STENCIL_COMPARE_MASK; break;
+                    case VK_DYNAMIC_STATE_STENCIL_WRITE_MASK: dynamic_states |= DYNAMIC_STATE_STENCIL_WRITE_MASK; break;
+
+                    case VK_DYNAMIC_STATE_VIEWPORT: {
+                        auto const& viewport_state { *info.pViewportState };
+                        auto vk_viewports { span<const VkViewport>(viewport_state.pViewports, viewport_state.viewportCount) };
+
+                        std::vector<D3D12_VIEWPORT> viewports;
+                        for (auto const& vp : vk_viewports) {
+                            viewports.emplace_back(
+                                D3D12_VIEWPORT { vp.x, vp.y, vp.width, vp.height, vp.minDepth, vp.maxDepth }
+                            );
+                        }
+                        pipeline->static_viewports = viewports;
+                    } break;
+                    case VK_DYNAMIC_STATE_SCISSOR: {
+                        auto const& viewport_state { *info.pViewportState };
+                        auto vk_scissors { span<const VkRect2D>(viewport_state.pScissors, viewport_state.scissorCount) };
+
+                        std::vector<D3D12_RECT> scissors;
+                        for (auto const& scissor : vk_scissors) {
+                            scissors.emplace_back(
+                                D3D12_RECT {
+                                    scissor.offset.x,
+                                    scissor.offset.y,
+                                    static_cast<LONG>(scissor.offset.x + scissor.extent.width),
+                                    static_cast<LONG>(scissor.offset.y + scissor.extent.height),
+                                }
+                            );
+                        }
+                        pipeline->static_scissors = scissors;
+                    } break;
+                    case VK_DYNAMIC_STATE_BLEND_CONSTANTS: static_blend_factors = false; break;
+                    case VK_DYNAMIC_STATE_DEPTH_BOUNDS: static_depth_bounds = false; break;
+                    case VK_DYNAMIC_STATE_STENCIL_REFERENCE: static_stencil_reference = false; break;
+                }
+            }
+        }
+
+        const auto primitive_restart { input_assembly.primitiveRestartEnable == VK_TRUE };
+        const auto index_strip_cut {
+            primitive_restart ?
+                D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF :
+                D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED
+        };
+
+        if (primitive_restart) {
+            dynamic_states |= DYNAMIC_STATE_PRIMITIVE_RESTART;
+        }
+
         // Vertex input state
         std::array<uint32_t, MAX_VERTEX_BUFFER_SLOTS> strides { 0 };
         for (auto i : range(vertex_input.vertexBindingDescriptionCount)) {
@@ -3221,6 +3284,15 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         if (!rasterization_state.rasterizerDiscardEnable && uses_color_attachments) {
             auto const& color_blend_state { *info.pColorBlendState };
             auto const& multisample_state { *info.pMultisampleState };
+
+            if (static_blend_factors) {
+                pipeline->static_blend_factors = blend_factors_t {
+                    color_blend_state.blendConstants[0],
+                    color_blend_state.blendConstants[1],
+                    color_blend_state.blendConstants[2],
+                    color_blend_state.blendConstants[3],
+                };
+            }
 
             auto blend_factor = [] (VkBlendFactor factor) {
                 switch (factor) {
@@ -3398,6 +3470,17 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
 
         if (!rasterization_state.rasterizerDiscardEnable && uses_depth_stencil_attachment) {
             auto const& depth_stencil_state { *info.pDepthStencilState };
+
+            if (static_depth_bounds) {
+                pipeline->static_depth_bounds = std::make_tuple(
+                    depth_stencil_state.minDepthBounds,
+                    depth_stencil_state.maxDepthBounds
+                );
+            }
+            if (static_stencil_reference) {
+                pipeline->static_stencil_reference = depth_stencil_state.front.reference; // PORTABILITY: front == back
+            }
+
             depth_stencil_desc.DepthEnable = depth_stencil_state.depthTestEnable == VK_TRUE;
             depth_stencil_desc.DepthWriteMask = depth_stencil_state.depthWriteEnable ?
                 D3D12_DEPTH_WRITE_MASK_ALL :
@@ -3408,72 +3491,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
             depth_stencil_desc.StencilWriteMask = depth_stencil_state.front.writeMask; // PORTABILITY: front == back
             depth_stencil_desc.FrontFace = stencil_op_state(depth_stencil_state.front);
             depth_stencil_desc.BackFace = stencil_op_state(depth_stencil_state.back);
-        }
-
-        // dynamic states
-        const auto primitive_restart { input_assembly.primitiveRestartEnable == VK_TRUE };
-        const auto index_strip_cut {
-            primitive_restart ?
-                D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF :
-                D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED
-        };
-
-        dynamic_states_t dynamic_states = 0;
-        bool static_viewports { true };
-        bool static_scissors { true };
-
-        if (info.pDynamicState) {
-            auto const& dynamic_state { *info.pDynamicState };
-            auto states {
-                span<const VkDynamicState>(dynamic_state.pDynamicStates, dynamic_state.dynamicStateCount)
-            };
-
-            for (auto const& state : states) {
-                switch (state) {
-                    case VK_DYNAMIC_STATE_DEPTH_BIAS: dynamic_states |= DYNAMIC_STATE_DEPTH_BIAS; break;
-                    case VK_DYNAMIC_STATE_DEPTH_BOUNDS: dynamic_states |= DYNAMIC_STATE_DEPTH_BOUNDS; break;
-                    case VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK: dynamic_states |= DYNAMIC_STATE_STENCIL_COMPARE_MASK; break;
-                    case VK_DYNAMIC_STATE_STENCIL_WRITE_MASK: dynamic_states |= DYNAMIC_STATE_STENCIL_WRITE_MASK; break;
-
-                    case VK_DYNAMIC_STATE_VIEWPORT: static_viewports = false; break;
-                }
-            }
-        }
-        if (primitive_restart) {
-            dynamic_states |= DYNAMIC_STATE_PRIMITIVE_RESTART;
-        }
-
-        if (static_viewports || static_scissors) {
-            auto const& viewport_state { *info.pViewportState };
-
-            if (static_viewports) {
-                auto vk_viewports { span<const VkViewport>(viewport_state.pViewports, viewport_state.viewportCount) };
-
-                std::vector<D3D12_VIEWPORT> viewports;
-                for (auto const& vp : vk_viewports) {
-                    viewports.emplace_back(
-                        D3D12_VIEWPORT { vp.x, vp.y, vp.width, vp.height, vp.minDepth, vp.maxDepth }
-                    );
-                }
-                pipeline->static_viewports = viewports;
-            }
-
-            if (static_scissors) {
-                auto vk_scissors { span<const VkRect2D>(viewport_state.pScissors, viewport_state.scissorCount) };
-
-                std::vector<D3D12_RECT> scissors;
-                for (auto const& scissor : vk_scissors) {
-                    scissors.emplace_back(
-                        D3D12_RECT {
-                            scissor.offset.x,
-                            scissor.offset.y,
-                            static_cast<LONG>(scissor.offset.x + scissor.extent.width),
-                            static_cast<LONG>(scissor.offset.y + scissor.extent.height),
-                        }
-                    );
-                }
-                pipeline->static_scissors = scissors;
-            }
         }
 
         // Indicate if we have a truly dynamic pso
@@ -4671,6 +4688,20 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
                 );
                 command_buffer->scissors_dirty = false;
             }
+            if (pipeline->static_blend_factors) {
+                (*command_buffer)->OMSetBlendFactor(
+                    pipeline->static_blend_factors->factors
+                );
+            }
+            if (pipeline->static_depth_bounds) {
+                const auto [min, max] = *pipeline->static_depth_bounds;
+                (*command_buffer)->OMSetDepthBounds(min, max);
+            }
+            if (pipeline->static_stencil_reference) {
+                (*command_buffer)->OMSetStencilRef(
+                    *pipeline->static_stencil_reference
+                );
+            }
         } break;
         case VK_PIPELINE_BIND_POINT_COMPUTE: {
             if (!command_buffer->active_slot) {
@@ -4748,7 +4779,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdSetLineWidth(
     float                                       lineWidth
 ) {
     TRACE("vkCmdSetLineWidth");
-    WARN("vkCmdSetLineWidth unimplemented");
+
+    // Nothing to do, not supported
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBias(
@@ -4762,47 +4794,62 @@ VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBias(
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdSetBlendConstants(
-    VkCommandBuffer                             commandBuffer,
+    VkCommandBuffer                             _commandBuffer,
     const float                                 blendConstants[4]
 ) {
     TRACE("vkCmdSetBlendConstants");
-    WARN("vkCmdSetBlendConstants unimplemented");
+
+    auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
+    (*command_buffer)->OMSetBlendFactor(blendConstants);
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBounds(
-    VkCommandBuffer                             commandBuffer,
+    VkCommandBuffer                             _commandBuffer,
     float                                       minDepthBounds,
     float                                       maxDepthBounds
 ) {
     TRACE("vkCmdSetDepthBounds");
-    WARN("vkCmdSetDepthBounds unimplemented");
+
+    auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
+    (*command_buffer)->OMSetDepthBounds(minDepthBounds, maxDepthBounds);
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilCompareMask(
-    VkCommandBuffer                             commandBuffer,
+    VkCommandBuffer                             _commandBuffer,
     VkStencilFaceFlags                          faceMask,
     uint32_t                                    compareMask
 ) {
     TRACE("vkCmdSetStencilCompareMask");
+
+    // PORTABILITY: compareMask must be same for both faces
+    auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
+
     WARN("vkCmdSetStencilCompareMask unimplemented");
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilWriteMask(
-    VkCommandBuffer                             commandBuffer,
+    VkCommandBuffer                             _commandBuffer,
     VkStencilFaceFlags                          faceMask,
     uint32_t                                    writeMask
 ) {
     TRACE("vkCmdSetStencilWriteMask");
+
+    // PORTABILITY: compareMask must be same for both faces
+    auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
+
     WARN("vkCmdSetStencilWriteMask unimplemented");
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilReference(
-    VkCommandBuffer                             commandBuffer,
+    VkCommandBuffer                             _commandBuffer,
     VkStencilFaceFlags                          faceMask,
     uint32_t                                    reference
 ) {
     TRACE("vkCmdSetStencilReference");
-    WARN("vkCmdSetStencilReference unimplemented");
+
+    // PORTABILITY: compareMask must be same for both faces
+    auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
+    (*command_buffer)->OMSetStencilRef(reference);
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(
