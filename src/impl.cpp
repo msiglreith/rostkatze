@@ -38,12 +38,14 @@
 #include <bitset>
 #include <map>
 #include <mutex>
+#include <shared_mutex>
 #include <optional>
 #include <unordered_map>
 #include <variant>
 #include <vector>
 
 #include <gsl/gsl>
+#include <stdx/match.hpp>
 #include <stdx/range.hpp>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/msvc_sink.h>
@@ -499,6 +501,85 @@ struct image_view_t {
     std::optional<std::tuple<D3D12_CPU_DESCRIPTOR_HANDLE, heap_index_t>> uav; // TODO: destroy
 };
 
+struct shader_module_t {
+    // Raw SPIR-V code
+    std::vector<uint32_t> spirv;
+};
+
+enum dynamic_state_flags {
+    DYNAMIC_STATE_VIEWPORT = 0x1,
+    DYNAMIC_STATE_SCISSOR = 0x2,
+    DYNAMIC_STATE_DEPTH_BIAS = 0x4,
+    DYNAMIC_STATE_BLEND_CONSTANTS = 0x8,
+    DYNAMIC_STATE_DEPTH_BOUNDS = 0x10,
+    DYNAMIC_STATE_STENCIL_COMPARE_MASK = 0x20,
+    DYNAMIC_STATE_STENCIL_WRITE_MASK = 0x40,
+    DYNAMIC_STATE_STENCIL_REFERENCE = 0x80,
+};
+using dynamic_states_t = uint32_t;
+
+struct dynamic_state_t {
+    INT depth_bias;
+    FLOAT depth_bias_clamp;
+    FLOAT depth_bias_slope;
+    UINT8 stencil_read_mask;
+    UINT8 stencil_write_mask;
+    D3D12_INDEX_BUFFER_STRIP_CUT_VALUE strip_cut;
+};
+
+struct blend_factors_t {
+    FLOAT factors[4];
+};
+
+enum class strip_cut {
+    U32,
+    U16,
+};
+
+struct pipeline_t {
+    struct unique_pso {
+        ComPtr<ID3D12PipelineState> pipeline;
+    };
+
+    struct static_pso {
+        std::unordered_map<strip_cut, ComPtr<ID3D12PipelineState>> pipelines;
+    };
+
+    // Pipeline with dynamic states
+    //  - Viewport and scissor are dynamic per se
+    //  - Line width must be 1.0
+    //  - Blend constants are dynamic per se
+    //  - Depth bounds are dynamic per se (if supported)
+    //  - Stencil ref is dynamic per se
+    //  - Index primitive restart value must be set dynamically
+    struct dynamic_pso {
+        std::unordered_map<dynamic_state_t, ComPtr<ID3D12PipelineState>> pipelines;
+    };
+
+    // Shared by compute and graphics
+    std::variant<unique_pso, static_pso, dynamic_pso> pso;
+    std::shared_mutex pso_access;
+    ID3D12RootSignature* signature;
+
+    size_t num_signature_entries;
+    size_t num_root_constants; // Number of root constants (32bit) in the root signature
+    std::vector<VkPushConstantRange> root_constants;
+
+    // Graphics only
+    D3D12_PRIMITIVE_TOPOLOGY topology;
+    std::array<uint32_t, MAX_VERTEX_BUFFER_SLOTS> vertex_strides;
+
+    bool primitive_restart;
+    dynamic_states_t dynamic_states;
+
+    dynamic_state_t static_state;
+    std::optional<std::vector<D3D12_VIEWPORT>> static_viewports;
+    std::optional<std::vector<D3D12_RECT>> static_rects;
+    std::optional<blend_factors_t> static_blend_factors;
+    std::optional<std::tuple<FLOAT, FLOAT>> static_depth_bounds;
+    std::optional<UINT> static_stencil_reference;
+};
+
 class command_buffer_t {
 public:
     struct pass_cache_t {
@@ -563,20 +644,14 @@ public:
         pipeline_slot_t() :
             pipeline { nullptr },
             signature { nullptr },
-            root_data { },
-            num_root_constants { 0 },
-            root_constants { },
-            num_signature_entries { 0 }
+            root_data { }
         {}
 
     public:
-        ID3D12PipelineState* pipeline;
+        struct pipeline_t* pipeline;
         ID3D12RootSignature* signature;
 
         user_data_t root_data;
-        size_t num_root_constants; // Number of root constants (32bit) in the root signature
-        size_t num_signature_entries; // Number of occupied entries in the root signature
-        std::vector<VkPushConstantRange> root_constants;
     };
 
 public:
@@ -587,6 +662,7 @@ public:
         heap_sampler { heap_sampler },
         pass_cache { std::nullopt },
         active_slot { std::nullopt },
+        active_pipeline { nullptr },
         viewports_dirty { false },
         scissors_dirty { false },
         num_viewports_scissors { 0 },
@@ -607,6 +683,7 @@ public:
 
         this->pass_cache = std::nullopt;
         this->active_slot = std::nullopt;
+        this->active_pipeline = nullptr;
         this->graphics_slot = pipeline_slot_t();
         this->compute_slot = pipeline_slot_t();
         this->num_viewports_scissors = 0;
@@ -633,12 +710,12 @@ public:
         const auto start_cbv_srv_uav { this->heap_cbv_srv_uav->GetGPUDescriptorHandleForHeapStart() };
         const auto start_sampler { this->heap_sampler->GetGPUDescriptorHandleForHeapStart() };
 
-        const auto num_root_constant_entries { slot.root_constants.size() };
-        const auto num_table_entries { slot.num_signature_entries };
+        const auto num_root_constant_entries { slot.pipeline->root_constants.size() };
+        const auto num_table_entries { slot.pipeline->num_signature_entries };
 
         auto start_constant { 0u };
         for (auto i : range(num_root_constant_entries)) {
-            auto const& root_constant { slot.root_constants[i] };
+            auto const& root_constant { slot.pipeline->root_constants[i] };
 
             for (auto c : range(start_constant, start_constant + root_constant.size / 4)) {
                 if (user_data.dirty[c]) {
@@ -655,7 +732,7 @@ public:
         }
 
         for (auto i : range(num_table_entries)) {
-            const auto data_slot { slot.num_root_constants + i };
+            const auto data_slot { slot.pipeline->num_root_constants + i };
             if (user_data.dirty[data_slot]) {
                 const auto offset { user_data.data[data_slot] };
                 SIZE_T descriptor_start { 0u };
@@ -684,10 +761,29 @@ public:
             this->command_list->SetDescriptorHeaps(2, &heaps[0]);
         }
 
-        // Check if we are switching to Graphics
         if (this->active_slot != SLOT_GRAPHICS) {
-            this->command_list->SetPipelineState(this->graphics_slot.pipeline);
+            this->active_pipeline = nullptr;
             this->active_slot = SLOT_GRAPHICS;
+        }
+
+        // Check if we are switching to Graphics
+        if (!this->active_pipeline) {
+            this->command_list->SetPipelineState(
+                std::visit(
+                    stdx::match(
+                        [] (pipeline_t::unique_pso& pso) {
+                            return pso.pipeline.Get();
+                        },
+                        [] (pipeline_t::static_pso& pso) {
+                            return static_cast<ID3D12PipelineState *>(nullptr); // TODO
+                        },
+                        [] (pipeline_t::dynamic_pso& pso) {
+                            return static_cast<ID3D12PipelineState *>(nullptr); // TODO
+                        }
+                    ),
+                    this->graphics_slot.pipeline->pso
+                )
+            );
         }
 
         if (this->viewports_dirty) {
@@ -762,10 +858,15 @@ public:
             this->command_list->SetDescriptorHeaps(2, &heaps[0]);
         }
 
-        // Check if we are switching to Compute
         if (this->active_slot != SLOT_COMPUTE) {
-            this->command_list->SetPipelineState(this->compute_slot.pipeline);
+            this->active_pipeline = nullptr;
             this->active_slot = SLOT_COMPUTE;
+        }
+
+        if (!this->active_pipeline) {
+            this->command_list->SetPipelineState(
+                std::get<pipeline_t::unique_pso>(this->compute_slot.pipeline->pso).pipeline.Get()
+            );
         }
 
         update_user_data(
@@ -937,6 +1038,7 @@ public:
     //
     ComPtr<ID3D12GraphicsCommandList2> command_list;
     std::optional<pipeline_slot_type> active_slot;
+    ID3D12PipelineState* active_pipeline;
 
     ID3D12DescriptorHeap* heap_cbv_srv_uav;
     ID3D12DescriptorHeap* heap_sampler;
@@ -1412,25 +1514,6 @@ struct pipeline_layout_t {
     std::vector<VkPushConstantRange> root_constants;
     size_t num_root_constants; // Number of root constants (32bit)
     size_t num_signature_entries;
-};
-
-struct shader_module_t {
-    // Raw SPIR-V code
-    std::vector<uint32_t> spirv;
-};
-
-struct pipeline_t {
-    // Shared by compute and graphics
-    ComPtr<ID3D12PipelineState> pso;
-    ID3D12RootSignature* signature;
-
-    size_t num_signature_entries;
-    size_t num_root_constants; // Number of root constants (32bit) in the root signature
-    std::vector<VkPushConstantRange> root_constants;
-
-    // Graphics only
-    D3D12_PRIMITIVE_TOPOLOGY topology;
-    std::array<uint32_t, MAX_VERTEX_BUFFER_SLOTS> vertex_strides;
 };
 
 struct sampler_t {
@@ -2991,6 +3074,8 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         auto render_pass { reinterpret_cast<render_pass_t *>(info.renderPass) };
         auto const& subpass { render_pass->subpasses[info.subpass] };
 
+        auto pipeline = new pipeline_t;
+
         // Compile shaders
         auto stages { span<const VkPipelineShaderStageCreateInfo>(info.pStages, info.stageCount) };
         ComPtr<ID3DBlob> vertex_shader { nullptr };
@@ -3259,6 +3344,10 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
             D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF
         };
 
+        pipeline->static_state.depth_bias = rasterizer_desc.DepthBias;
+        pipeline->static_state.depth_bias_clamp = rasterizer_desc.DepthBiasClamp;
+        pipeline->static_state.depth_bias_slope = rasterizer_desc.SlopeScaledDepthBias;
+
         // depth stencil desc
         const auto depth_attachment { subpass.depth_attachment.attachment };
         const auto dsv_format {
@@ -3310,6 +3399,40 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
             // TODO: stencil ref
         }
 
+        // dynamic states
+        const auto primitive_restart { input_assembly.primitiveRestartEnable == VK_TRUE };
+        const auto index_strip_cut {
+            primitive_restart ?
+                D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF :
+                D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED
+        };
+
+        dynamic_states_t dynamic_states = 0;
+        if (info.pDynamicState) {
+            auto const& dynamic_state { *info.pDynamicState };
+            auto states {
+                span<const VkDynamicState>(dynamic_state.pDynamicStates, dynamic_state.dynamicStateCount)
+            };
+
+            for (auto const& state : states) {
+                switch (state) {
+                    case VK_DYNAMIC_STATE_VIEWPORT: dynamic_states |= DYNAMIC_STATE_VIEWPORT; break;
+                    case VK_DYNAMIC_STATE_SCISSOR: dynamic_states |= DYNAMIC_STATE_SCISSOR; break;
+                    case VK_DYNAMIC_STATE_LINE_WIDTH: break; // line width must be 1.0 always
+                    case VK_DYNAMIC_STATE_DEPTH_BIAS: dynamic_states |= DYNAMIC_STATE_DEPTH_BIAS; break;
+                    case VK_DYNAMIC_STATE_BLEND_CONSTANTS: dynamic_states |= DYNAMIC_STATE_BLEND_CONSTANTS; break;
+                    case VK_DYNAMIC_STATE_DEPTH_BOUNDS: dynamic_states |= DYNAMIC_STATE_DEPTH_BOUNDS; break;
+                    case VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK: dynamic_states |= DYNAMIC_STATE_STENCIL_COMPARE_MASK; break;
+                    case VK_DYNAMIC_STATE_STENCIL_WRITE_MASK: dynamic_states |= DYNAMIC_STATE_STENCIL_WRITE_MASK; break;
+                    case VK_DYNAMIC_STATE_STENCIL_REFERENCE: dynamic_states |= DYNAMIC_STATE_STENCIL_REFERENCE; break;
+                }
+            }
+        }
+        // Indicate if we have a truly dynamic pso
+        const auto dynamic_pso {
+            (dynamic_states & (DYNAMIC_STATE_DEPTH_BIAS | DYNAMIC_STATE_BLEND_CONSTANTS | DYNAMIC_STATE_STENCIL_COMPARE_MASK | DYNAMIC_STATE_STENCIL_WRITE_MASK)) != 0
+        };
+
         const auto num_render_targets { subpass.color_attachments.size() };
 
         D3D12_GRAPHICS_PIPELINE_STATE_DESC desc {
@@ -3328,7 +3451,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
                 input_elements.data(),
                 static_cast<UINT>(input_elements.size())
             },
-            D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED, // TODO
+            index_strip_cut,
             topology_type,
             num_render_targets,
             { }, // Fill in RTV formats below
@@ -3347,9 +3470,23 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
                 DXGI_FORMAT_UNKNOWN;
         }
 
-        auto pipeline = new pipeline_t;
-        auto const hr { (*device)->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&(pipeline->pso))) };
+        ComPtr<ID3D12PipelineState> pso { nullptr };
+        auto const hr { (*device)->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso)) };
         // TODO: error handling
+
+        const auto is_unique { !dynamic_pso && !primitive_restart };
+        if (is_unique) {
+            pipeline->pso = pipeline_t::unique_pso { pso };
+        } else if (dynamic_pso) {
+            // TODO
+        } else {
+            const auto cut_value {
+                index_strip_cut == D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF ?
+                    strip_cut::U16 :
+                    strip_cut::U32
+            };
+            pipeline->pso = pipeline_t::static_pso {{{ cut_value, pso }}};
+        }
 
         pipeline->signature = signature;
         pipeline->num_signature_entries = layout->num_signature_entries;
@@ -3401,8 +3538,12 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateComputePipelines(
         };
 
         auto pipeline = new pipeline_t;
-        auto const hr { (*device)->CreateComputePipelineState(&desc, IID_PPV_ARGS(&(pipeline->pso))) };
+        ComPtr<ID3D12PipelineState> pso { nullptr };
+        auto const hr { (*device)->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pso)) };
         // TODO: errror handling
+
+        // TODO:
+        pipeline->pso = pipeline_t::unique_pso { pso };
 
         pipeline->signature = signature;
         pipeline->num_signature_entries = layout->num_signature_entries;
@@ -4452,10 +4593,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
 
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
     auto pipeline { reinterpret_cast<pipeline_t *>(_pipeline) };
-    auto pso { pipeline->pso.Get() };
     auto signature { pipeline->signature };
-
-    (*command_buffer)->SetPipelineState(pso);
 
     switch (pipelineBindPoint) {
         case VK_PIPELINE_BIND_POINT_GRAPHICS: {
@@ -4473,10 +4611,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
                 command_buffer->graphics_slot.signature = signature;
                 // TODO: descriptor sets
             }
-            command_buffer->graphics_slot.pipeline = pso;
-            command_buffer->graphics_slot.num_root_constants = pipeline->num_root_constants;
-            command_buffer->graphics_slot.root_constants = pipeline->root_constants;
-            command_buffer->graphics_slot.num_signature_entries = pipeline->num_signature_entries;
+            command_buffer->graphics_slot.pipeline = pipeline;
             (*command_buffer)->IASetPrimitiveTopology(pipeline->topology); // no need to cache this
 
             for (auto i : range(MAX_VERTEX_BUFFER_SLOTS)) {
@@ -4498,11 +4633,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
                 command_buffer->compute_slot.signature = signature;
                 // TODO: descriptor sets
             }
-            command_buffer->compute_slot.pipeline = pso;
-            command_buffer->compute_slot.num_root_constants = pipeline->num_root_constants;
-            command_buffer->compute_slot.root_constants = pipeline->root_constants;
-            command_buffer->compute_slot.num_signature_entries = pipeline->num_signature_entries;
-
+            command_buffer->compute_slot.pipeline = pipeline;
         } break;
     }
 }
