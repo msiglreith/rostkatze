@@ -39,6 +39,7 @@ Good luck!
 - particlefire (small particles only)
 - scenerendering
 - HDR
+- shadowmapping
 - shadowmappingcascade
 - shadowmappingomni
 - skeletalanimation
@@ -57,7 +58,6 @@ Good luck!
 
 ## Partially working
 
-- shadowmapping (dynamic depth bias missing)
 - computecloth (bugs)
 - ssao (bugs)
 - pushconstants (push constant array members)
