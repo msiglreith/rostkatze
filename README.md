@@ -30,6 +30,7 @@ Good luck!
 - triangle
 - pipelines
 - texture
+- texturecubmap (some mipmaps not loaded)
 - texturearray
 - mesh
 - specialization constants
@@ -38,7 +39,7 @@ Good luck!
 - textoverlay
 - particlefire (small particles only)
 - scenerendering
-- HDR
+- HDR (some mipmaps not loaded)
 - shadowmapping
 - shadowmappingcascade
 - shadowmappingomni
@@ -64,7 +65,6 @@ Good luck!
 
 # Almost/Not working
 
-- texturecubmap (texture copy alignment)
 - multithreading (seconday buffers not implemented)
 - dynamic uniform buffers (not implemented)
 - instancing (inverse, ?)
