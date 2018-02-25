@@ -40,6 +40,8 @@ Good luck!
 - particlefire (small particles only)
 - scenerendering
 - HDR (some mipmaps not loaded)
+- instancing (some mipmaps not loaded)
+- indirect drawing (some mipmaps not loaded)
 - shadowmapping
 - shadowmappingcascade
 - shadowmappingomni
@@ -67,15 +69,13 @@ Good luck!
 
 - multithreading (seconday buffers not implemented)
 - dynamic uniform buffers (not implemented)
-- instancing (inverse, ?)
-- indirect drawing (not implemented)
 - occlusion queries (not implemented)
 - mipmap gen (not implemented)
 - multisampling (not implemented)
 - deferred shadows (geometry shader support)
-- n-body (bug either in spirv-cross or samples)
+- n-body (bug in samples/UB/portability)
 - raytracing (reading structs from byteaddressbuffer not supported)
-- culllod (indirect drawing, ..)
+- culllod (indirect drawing, num_workgroups builtin, ..)
 - parallax (samples bug?)
 
 - All tessellation and geometry samples

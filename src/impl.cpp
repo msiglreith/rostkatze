@@ -647,631 +647,6 @@ struct pipeline_t {
     std::optional<UINT> static_stencil_reference;
 };
 
-class command_buffer_t {
-public:
-    struct pass_cache_t {
-        // Current subpass
-        size_t subpass;
-        //
-        render_pass_t* render_pass;
-        framebuffer_t* framebuffer;
-        //
-        std::vector<VkClearValue> clear_values;
-        D3D12_RECT render_area;
-    };
-
-    enum pipeline_slot_type {
-        SLOT_GRAPHICS,
-        SLOT_COMPUTE,
-    };
-
-    struct pipeline_slot_t {
-    public:
-        enum class data_entry_type {
-            UNDEFINED, // TODO: Not needed probably
-            SAMPLER,
-            CBV_SRV_UAV,
-            CONSTANT,
-        };
-
-        // Virtual root user data
-        struct user_data_t {
-        public:
-            user_data_t() :
-                dirty { 0 },
-                data { 0 },
-                type { data_entry_type::UNDEFINED }
-            { }
-
-            auto set_constant(size_t slot, uint32_t data) -> void {
-                this->dirty.set(slot);
-                this->data[slot] = data;
-                this->type[slot] = data_entry_type::CONSTANT;
-            }
-
-            auto set_cbv_srv_uav(size_t slot, uint32_t data) -> void {
-                this->dirty.set(slot);
-                this->data[slot] = data;
-                this->type[slot] = data_entry_type::CBV_SRV_UAV;
-            }
-
-            auto set_sampler(size_t slot, uint32_t data) -> void {
-                this->dirty.set(slot);
-                this->data[slot] = data;
-                this->type[slot] = data_entry_type::SAMPLER;
-            }
-
-        public:
-            std::bitset<D3D12_MAX_ROOT_COST> dirty;
-            std::array<uint32_t, D3D12_MAX_ROOT_COST> data;
-            std::array<data_entry_type, D3D12_MAX_ROOT_COST> type;
-        };
-
-    public:
-        pipeline_slot_t() :
-            pipeline { nullptr },
-            signature { nullptr },
-            root_data { }
-        {}
-
-    public:
-        struct pipeline_t* pipeline;
-        ID3D12RootSignature* signature;
-
-        user_data_t root_data;
-    };
-
-public:
-    command_buffer_t(ID3D12DescriptorHeap* heap_cbv_srv_uav, ID3D12DescriptorHeap* heap_sampler) :
-        loader_magic { ICD_LOADER_MAGIC },
-        command_list { nullptr },
-        heap_cbv_srv_uav { heap_cbv_srv_uav },
-        heap_sampler { heap_sampler },
-        pass_cache { std::nullopt },
-        active_slot { std::nullopt },
-        active_pipeline { nullptr },
-        dynamic_state_dirty { false },
-        viewports_dirty { false },
-        scissors_dirty { false },
-        num_viewports_scissors { 0 },
-        vertex_buffer_views_dirty { 0 },
-        device { nullptr },
-        pso_buffer_to_image { nullptr },
-        signature_buffer_to_image { nullptr },
-        dynamic_state { },
-        index_type { VK_INDEX_TYPE_UINT16 }
-    { }
-
-    ~command_buffer_t() {}
-
-    auto operator->() -> ID3D12GraphicsCommandList2* {
-        return this->command_list.Get();
-    }
-
-    auto reset() -> void {
-        this->command_list->Reset(this->allocator, nullptr);
-
-        this->pass_cache = std::nullopt;
-        this->active_slot = std::nullopt;
-        this->active_pipeline = nullptr;
-        this->graphics_slot = pipeline_slot_t();
-        this->compute_slot = pipeline_slot_t();
-        this->num_viewports_scissors = 0;
-        this->viewports_dirty = false;
-        this->scissors_dirty = false;
-        this->vertex_buffer_views_dirty = 0;
-        this->dynamic_state = dynamic_state_t();
-        this->dynamic_state_dirty = false;
-        this->index_type = VK_INDEX_TYPE_UINT16;
-    }
-
-    auto end() -> void {
-        this->command_list->Close();
-        // TODO: error handling
-    }
-
-    auto update_user_data(
-        pipeline_slot_t& slot,
-        std::function<void (UINT slot, uint32_t data, UINT offset)> set_constant,
-        std::function<void (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle)> set_table
-    ) {
-        auto user_data { slot.root_data };
-        if (user_data.dirty.none()) {
-            return;
-        }
-
-        const auto start_cbv_srv_uav { this->heap_cbv_srv_uav->GetGPUDescriptorHandleForHeapStart() };
-        const auto start_sampler { this->heap_sampler->GetGPUDescriptorHandleForHeapStart() };
-
-        const auto num_root_constant_entries { slot.pipeline->root_constants.size() };
-        const auto num_table_entries { slot.pipeline->num_signature_entries };
-
-        auto start_constant { 0u };
-        for (auto i : range(num_root_constant_entries)) {
-            auto const& root_constant { slot.pipeline->root_constants[i] };
-
-            for (auto c : range(start_constant, start_constant + root_constant.size / 4)) {
-                if (user_data.dirty[c]) {
-                    set_constant(
-                        static_cast<UINT>(i),
-                        user_data.data[c],
-                        c - start_constant
-                    );
-                    user_data.dirty.reset(c);
-                }
-            }
-
-            start_constant += root_constant.size / 4;
-        }
-
-        for (auto i : range(num_table_entries)) {
-            const auto data_slot { slot.pipeline->num_root_constants + i };
-            if (user_data.dirty[data_slot]) {
-                const auto offset { user_data.data[data_slot] };
-                SIZE_T descriptor_start { 0u };
-                switch (user_data.type[data_slot]) {
-                    case pipeline_slot_t::data_entry_type::CBV_SRV_UAV: descriptor_start = start_cbv_srv_uav.ptr; break;
-                    case pipeline_slot_t::data_entry_type::SAMPLER: descriptor_start = start_sampler.ptr; break;
-                    default: WARN("Unexpected user data entry: {}", static_cast<uint32_t>(user_data.type[i]));
-                }
-
-                const auto handle { D3D12_GPU_DESCRIPTOR_HANDLE { descriptor_start + offset } };
-                set_table(
-                    static_cast<UINT>(num_root_constant_entries + i),
-                    handle
-                );
-                user_data.dirty.reset(data_slot);
-            }
-        }
-    }
-
-    auto bind_graphics_slot(draw_type draw_type) -> void {
-        if (!this->active_slot) {
-            std::array<ID3D12DescriptorHeap *const, 2> heaps {
-                this->heap_cbv_srv_uav,
-                this->heap_sampler
-            };
-            this->command_list->SetDescriptorHeaps(2, &heaps[0]);
-        }
-
-
-        if (
-            (this->dynamic_state_dirty && this->graphics_slot.pipeline->dynamic_states) ||
-            this->active_slot != SLOT_GRAPHICS // Check if we are switching to Graphics
-        ) {
-            this->active_pipeline = nullptr;
-        }
-
-        if (!this->active_pipeline) {
-            this->command_list->SetPipelineState(
-                std::visit(
-                    stdx::match(
-                        [] (pipeline_t::unique_pso_t& pso) {
-                            return pso.pipeline.Get();
-                        },
-                        [&] (pipeline_t::dynamic_pso_t& pso) {
-                            // Check if we have one available already
-                            {
-                                auto dynamic_state { this->dynamic_state };
-                                this->graphics_slot.pipeline->pso_access.lock_shared();
-                                switch (draw_type) {
-                                    case draw_type::DRAW: {
-                                        // Check all three strip cut variants
-                                        dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
-                                        auto pipeline { pso.pipelines.find(dynamic_state) };
-                                        if (pipeline != pso.pipelines.end()) {
-                                            return pipeline->second.Get();
-                                        }
-                                        dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF;
-                                        pipeline = pso.pipelines.find(dynamic_state);
-                                        if (pipeline != pso.pipelines.end()) {
-                                            return pipeline->second.Get();
-                                        }
-                                        dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF;
-                                        pipeline = pso.pipelines.find(dynamic_state);
-                                        if (pipeline != pso.pipelines.end()) {
-                                            return pipeline->second.Get();
-                                        }
-                                    } break;
-                                    case draw_type::DRAW_INDEXED: {
-                                        if (graphics_slot.pipeline->dynamic_states & DYNAMIC_STATE_PRIMITIVE_RESTART) {
-                                            switch (index_type) {
-                                                case VK_INDEX_TYPE_UINT16:
-                                                    dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF;
-                                                    break;
-                                                case VK_INDEX_TYPE_UINT32:
-                                                    dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF;
-                                                    break;
-                                            }
-                                        } else {
-                                            dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
-                                        }
-
-                                        auto pipeline { pso.pipelines.find(dynamic_state) };
-                                        if (pipeline != pso.pipelines.end()) {
-                                            return pipeline->second.Get();
-                                        }
-                                    } break;
-                                }
-                                this->graphics_slot.pipeline->pso_access.unlock_shared();
-                            }
-
-                            // Generate a new one
-                            auto shader_bc = [] (ComPtr<ID3DBlob> shader) {
-                                return shader ?
-                                    D3D12_SHADER_BYTECODE { shader->GetBufferPointer(), shader->GetBufferSize() } :
-                                    D3D12_SHADER_BYTECODE { 0, 0 };
-                            };
-
-                            // Apply currently set dynamic state values
-                            const auto dynamics { this->graphics_slot.pipeline->dynamic_states };
-                            auto const& dynamic_state { this->dynamic_state };
-
-                            auto rasterizer_state { pso.rasterizer_state };
-                            if (dynamics & DYNAMIC_STATE_DEPTH_BIAS) {
-                                rasterizer_state.DepthBias = dynamic_state.depth_bias;
-                                rasterizer_state.DepthBiasClamp = dynamic_state.depth_bias_clamp;
-                                rasterizer_state.SlopeScaledDepthBias = dynamic_state.depth_bias_slope;
-                            }
-
-                            auto depth_stencil_state { pso.depth_stencil_state };
-                            if (dynamics & DYNAMIC_STATE_STENCIL_COMPARE_MASK) {
-                                depth_stencil_state.StencilReadMask = dynamic_state.stencil_read_mask;
-                            }
-                            if (dynamics & DYNAMIC_STATE_STENCIL_WRITE_MASK) {
-                                depth_stencil_state.StencilWriteMask = dynamic_state.stencil_write_mask;
-                            }
-
-                            D3D12_GRAPHICS_PIPELINE_STATE_DESC desc {
-                                this->graphics_slot.pipeline->signature,
-                                shader_bc(pso.vertex_shader),
-                                shader_bc(pso.pixel_shader),
-                                shader_bc(pso.domain_shader),
-                                shader_bc(pso.hull_shader),
-                                shader_bc(pso.geometry_shader),
-                                D3D12_STREAM_OUTPUT_DESC { }, // not used
-                                pso.blend_state,
-                                pso.sample_mask,
-                                rasterizer_state,
-                                depth_stencil_state,
-                                D3D12_INPUT_LAYOUT_DESC {
-                                    pso.input_elements.data(),
-                                    static_cast<UINT>(pso.input_elements.size())
-                                },
-                                dynamic_state.strip_cut,
-                                pso.topology_type,
-                                pso.num_render_targets,
-                                pso.rtv_formats[0], pso.rtv_formats[1], pso.rtv_formats[2], pso.rtv_formats[3],
-                                pso.rtv_formats[4], pso.rtv_formats[5], pso.rtv_formats[6], pso.rtv_formats[7],
-                                pso.dsv_format,
-                                pso.sample_desc,
-                                0, // NodeMask
-                                D3D12_CACHED_PIPELINE_STATE { }, // TODO
-                                D3D12_PIPELINE_STATE_FLAG_NONE, // TODO
-                            };
-
-                            ComPtr<ID3D12PipelineState> pipeline;
-                            auto const hr { this->device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pipeline)) };
-                            // TODO: error handling
-
-                            this->graphics_slot.pipeline->pso_access.lock();
-                            pso.pipelines.emplace(dynamic_state, pipeline);
-                            this->graphics_slot.pipeline->pso_access.unlock();
-
-                            return pipeline.Get();
-                        }
-                    ),
-                    this->graphics_slot.pipeline->pso
-                )
-            );
-        }
-
-        this->active_slot = SLOT_GRAPHICS;
-
-        if (this->viewports_dirty) {
-            this->command_list->RSSetViewports(
-                this->num_viewports_scissors,
-                this->viewports
-            );
-            this->viewports_dirty = false;
-        }
-
-        if (this->scissors_dirty) {
-            this->command_list->RSSetScissorRects(
-                this->num_viewports_scissors,
-                this->scissors
-            );
-            this->scissors_dirty = false;
-        }
-
-        if (this->vertex_buffer_views_dirty.any()) {
-            std::optional<size_t> in_range { std::nullopt };
-            for (auto i : range(MAX_VERTEX_BUFFER_SLOTS)) {
-                const auto has_flag { this->vertex_buffer_views_dirty[i] };
-
-                if (has_flag) {
-                    this->vertex_buffer_views_dirty.reset(i);
-                    if (!in_range) {
-                        in_range = i;
-                    }
-                } else if (in_range) {
-                    this->command_list->IASetVertexBuffers(
-                        static_cast<UINT>(*in_range),
-                        static_cast<UINT>(i - *in_range),
-                        this->vertex_buffer_views
-                    );
-                    in_range = std::nullopt;
-                }
-            }
-
-            if (in_range) {
-                this->command_list->IASetVertexBuffers(
-                    static_cast<UINT>(*in_range),
-                    static_cast<UINT>(MAX_VERTEX_BUFFER_SLOTS - *in_range),
-                    this->vertex_buffer_views
-                );
-            }
-        }
-
-        update_user_data(
-            this->graphics_slot,
-            [&] (UINT slot, uint32_t data, UINT offset) {
-                this->command_list->SetGraphicsRoot32BitConstant(
-                    slot,
-                    data,
-                    offset
-                );
-            },
-            [&] (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle) {
-                this->command_list->SetGraphicsRootDescriptorTable(
-                    slot,
-                    handle
-                );
-            }
-        );
-    }
-
-    auto bind_compute_slot() -> void {
-        if (!this->active_slot) {
-            std::array<ID3D12DescriptorHeap *const, 2> heaps {
-                this->heap_cbv_srv_uav,
-                this->heap_sampler
-            };
-            this->command_list->SetDescriptorHeaps(2, &heaps[0]);
-        }
-
-        if (this->active_slot != SLOT_COMPUTE) {
-            this->active_pipeline = nullptr;
-            this->active_slot = SLOT_COMPUTE;
-        }
-
-        if (!this->active_pipeline) {
-            this->command_list->SetPipelineState(
-                std::get<pipeline_t::unique_pso_t>(this->compute_slot.pipeline->pso).pipeline.Get()
-            );
-        }
-
-        update_user_data(
-            this->compute_slot,
-            [&] (UINT slot, uint32_t data, UINT offset) {
-                this->command_list->SetComputeRoot32BitConstant(
-                    slot,
-                    data,
-                    offset
-                );
-            },
-            [&] (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle) {
-                this->command_list->SetComputeRootDescriptorTable(
-                    slot,
-                    handle
-                );
-            }
-        );
-    }
-
-
-    auto begin_subpass(VkSubpassContents contents) -> void {
-        // TODO: contents
-
-        auto const& pass_cache { *this->pass_cache };
-        auto clear_values { span<const VkClearValue>(pass_cache.clear_values) };
-        auto framebuffer { pass_cache.framebuffer };
-        auto render_pass { pass_cache.render_pass };
-
-        const auto subpass_id { pass_cache.subpass };
-        auto const& subpass { render_pass->subpasses[subpass_id] };
-
-        // Clear attachments on first use
-        for (auto const& color_attachment : subpass.color_attachments) {
-            if (color_attachment.attachment == VK_ATTACHMENT_UNUSED) {
-                continue;
-            }
-
-            auto const& attachment { render_pass->attachments[color_attachment.attachment] };
-            if (attachment.first_use == subpass_id) {
-                auto view { framebuffer->attachments[color_attachment.attachment] };
-                if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-                    // TODO: temp barriers...
-                    this->command_list->ResourceBarrier(1,
-                        &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET)
-                    );
-                    this->command_list->ClearRenderTargetView(
-                        std::get<0>(*view->rtv),
-                        clear_values[color_attachment.attachment].color.float32,
-                        1,
-                        &pass_cache.render_area
-                    );
-                }
-            }
-        }
-
-        const auto depth_attachment { subpass.depth_attachment.attachment };
-        if (depth_attachment != VK_ATTACHMENT_UNUSED) {
-            auto const& attachment {
-                render_pass->attachments[depth_attachment]
-            };
-
-            if (attachment.first_use == subpass_id) {
-                auto view { framebuffer->attachments[depth_attachment] };
-
-                D3D12_CLEAR_FLAGS clear_flags { static_cast<D3D12_CLEAR_FLAGS>(0) };
-                float depth { 0 };
-                UINT8 stencil { 0 };
-
-                if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-                    clear_flags |= D3D12_CLEAR_FLAG_DEPTH;
-                    depth = clear_values[depth_attachment].depthStencil.depth;
-                }
-
-                // TODO: stencil
-
-                if (clear_flags) {
-                    // TODO: temp barriers...
-                    this->command_list->ResourceBarrier(1,
-                        &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE)
-                    );
-                    this->command_list->ClearDepthStencilView(
-                        std::get<0>(*view->dsv),
-                        clear_flags,
-                        depth,
-                        stencil,
-                        1,
-                        &pass_cache.render_area
-                    );
-                }
-            }
-        }
-
-        // Bind render targets
-        auto color_attachments { span<const VkAttachmentReference>(subpass.color_attachments) };
-        const auto num_rtvs { color_attachments.size() };
-        D3D12_CPU_DESCRIPTOR_HANDLE render_targets[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT];
-        for (auto i : range(num_rtvs)) {
-            // TODO: support VK_ATTACHMENT_UNUSED
-            const auto color_attachment { color_attachments[i].attachment };
-            assert(color_attachment != VK_ATTACHMENT_UNUSED);
-            render_targets[i] = std::get<0>(*framebuffer->attachments[color_attachment]->rtv);
-        }
-
-        D3D12_CPU_DESCRIPTOR_HANDLE* dsv { nullptr };
-        if (depth_attachment != VK_ATTACHMENT_UNUSED) {
-            dsv = &std::get<0>(*framebuffer->attachments[depth_attachment]->dsv);
-        }
-
-        this->command_list->OMSetRenderTargets(
-            static_cast<UINT>(num_rtvs),
-            render_targets,
-            !!dsv,
-            dsv
-        );
-    }
-
-    auto end_subpass() -> void {
-        auto const& pass_cache { *this->pass_cache };
-        auto framebuffer { pass_cache.framebuffer };
-        auto render_pass { pass_cache.render_pass };
-
-        const auto subpass_id { pass_cache.subpass };
-        auto const& subpass { render_pass->subpasses[subpass_id] };
-
-        // Clear attachments on first use
-        // TODO
-        for (auto const& color_attachment : subpass.color_attachments) {
-            if (color_attachment.attachment == VK_ATTACHMENT_UNUSED) {
-                continue;
-            }
-
-            auto const& attachment { render_pass->attachments[color_attachment.attachment] };
-            if (attachment.first_use == subpass_id) {
-                auto view { framebuffer->attachments[color_attachment.attachment] };
-                if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-                    // TODO: temp barriers...
-                    this->command_list->ResourceBarrier(1,
-                        &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COMMON)
-                    );
-                }
-            }
-        }
-
-        const auto depth_attachment { subpass.depth_attachment.attachment };
-        if (depth_attachment != VK_ATTACHMENT_UNUSED) {
-            auto const& attachment {
-                render_pass->attachments[depth_attachment]
-            };
-
-            if (attachment.first_use == subpass_id) {
-                auto view { framebuffer->attachments[depth_attachment] };
-
-                if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-                    // TODO: temp barriers...
-                    this->command_list->ResourceBarrier(1,
-                        &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COMMON)
-                    );
-                }
-            }
-        }
-    }
-
-private:
-    /// Dispatchable object
-    uintptr_t loader_magic;
-
-public:
-    //
-    ComPtr<ID3D12GraphicsCommandList2> command_list;
-    std::optional<pipeline_slot_type> active_slot;
-    ID3D12PipelineState* active_pipeline;
-
-    ID3D12DescriptorHeap* heap_cbv_srv_uav;
-    ID3D12DescriptorHeap* heap_sampler;
-
-    bool dynamic_state_dirty;
-    bool viewports_dirty;
-    bool scissors_dirty;
-    std::bitset<MAX_VERTEX_BUFFER_SLOTS> vertex_buffer_views_dirty;
-
-    // Currently set dynamic state
-    dynamic_state_t dynamic_state;
-    VkIndexType index_type;
-
-    // Owning command allocator, required for reset
-    ID3D12CommandAllocator* allocator;
-
-    std::optional<pass_cache_t> pass_cache;
-
-    pipeline_slot_t graphics_slot;
-    pipeline_slot_t compute_slot;
-
-    D3D12_VIEWPORT viewports[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-    D3D12_RECT scissors[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-    UINT num_viewports_scissors;
-
-    // Stride values are not known when calling `vkCmdBindVertexBuffers`
-    D3D12_VERTEX_BUFFER_VIEW vertex_buffer_views[MAX_VERTEX_BUFFER_SLOTS];
-
-    ID3D12Device* device;
-
-    // BufferToImage copy
-    ID3D12PipelineState* pso_buffer_to_image;
-    ID3D12RootSignature* signature_buffer_to_image;
-
-    std::vector<ComPtr<ID3D12DescriptorHeap>> temp_heaps;
-};
-
-struct semaphore_t {
-    ComPtr<ID3D12Fence> fence;
-};
-
-struct surface_t {
-    ComPtr<IDXGIFactory5> dxgi_factory;
-    HWND hwnd;
-};
-
-struct swapchain_t {
-    ComPtr<IDXGISwapChain3> swapchain;
-    std::vector<image_t> images;
-};
-
 class device_t final {
 public:
     device_t(ComPtr<ID3D12Device3> device) :
@@ -1585,8 +960,638 @@ public:
     descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1'000'000> descriptors_gpu_cbv_srv_uav;
     descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 2048> descriptors_gpu_sampler;
 
+    // Indirect execution signatures
+    ComPtr<ID3D12CommandSignature> dispatch_indirect;
+    std::unordered_map<uint32_t, ComPtr<ID3D12CommandSignature>> draw_indirect;
+    std::unordered_map<uint32_t, ComPtr<ID3D12CommandSignature>> draw_indexed_indirect;
+    // Indirect draw/draw_indirect signature access token
+    std::shared_mutex draw_indirect_access;
+
     ComPtr<ID3D12PipelineState> pso_buffer_to_image { nullptr };
     ComPtr<ID3D12RootSignature> signature_buffer_to_image { nullptr };
+};
+
+class command_buffer_t {
+public:
+    struct pass_cache_t {
+        // Current subpass
+        size_t subpass;
+        //
+        render_pass_t* render_pass;
+        framebuffer_t* framebuffer;
+        //
+        std::vector<VkClearValue> clear_values;
+        D3D12_RECT render_area;
+    };
+
+    enum pipeline_slot_type {
+        SLOT_GRAPHICS,
+        SLOT_COMPUTE,
+    };
+
+    struct pipeline_slot_t {
+    public:
+        enum class data_entry_type {
+            UNDEFINED, // TODO: Not needed probably
+            SAMPLER,
+            CBV_SRV_UAV,
+            CONSTANT,
+        };
+
+        // Virtual root user data
+        struct user_data_t {
+        public:
+            user_data_t() :
+                dirty { 0 },
+                data { 0 },
+                type { data_entry_type::UNDEFINED }
+            { }
+
+            auto set_constant(size_t slot, uint32_t data) -> void {
+                this->dirty.set(slot);
+                this->data[slot] = data;
+                this->type[slot] = data_entry_type::CONSTANT;
+            }
+
+            auto set_cbv_srv_uav(size_t slot, uint32_t data) -> void {
+                this->dirty.set(slot);
+                this->data[slot] = data;
+                this->type[slot] = data_entry_type::CBV_SRV_UAV;
+            }
+
+            auto set_sampler(size_t slot, uint32_t data) -> void {
+                this->dirty.set(slot);
+                this->data[slot] = data;
+                this->type[slot] = data_entry_type::SAMPLER;
+            }
+
+        public:
+            std::bitset<D3D12_MAX_ROOT_COST> dirty;
+            std::array<uint32_t, D3D12_MAX_ROOT_COST> data;
+            std::array<data_entry_type, D3D12_MAX_ROOT_COST> type;
+        };
+
+    public:
+        pipeline_slot_t() :
+            pipeline { nullptr },
+            signature { nullptr },
+            root_data { }
+        {}
+
+    public:
+        struct pipeline_t* pipeline;
+        ID3D12RootSignature* signature;
+
+        user_data_t root_data;
+    };
+
+public:
+    command_buffer_t(ID3D12DescriptorHeap* heap_cbv_srv_uav, ID3D12DescriptorHeap* heap_sampler) :
+        loader_magic { ICD_LOADER_MAGIC },
+        command_list { nullptr },
+        heap_cbv_srv_uav { heap_cbv_srv_uav },
+        heap_sampler { heap_sampler },
+        pass_cache { std::nullopt },
+        active_slot { std::nullopt },
+        active_pipeline { nullptr },
+        dynamic_state_dirty { false },
+        viewports_dirty { false },
+        scissors_dirty { false },
+        num_viewports_scissors { 0 },
+        vertex_buffer_views_dirty { 0 },
+        _device { nullptr },
+        dynamic_state { },
+        index_type { VK_INDEX_TYPE_UINT16 }
+    { }
+
+    ~command_buffer_t() {}
+
+    auto operator->() -> ID3D12GraphicsCommandList2* {
+        return this->command_list.Get();
+    }
+
+    auto reset() -> void {
+        this->command_list->Reset(this->allocator, nullptr);
+
+        this->pass_cache = std::nullopt;
+        this->active_slot = std::nullopt;
+        this->active_pipeline = nullptr;
+        this->graphics_slot = pipeline_slot_t();
+        this->compute_slot = pipeline_slot_t();
+        this->num_viewports_scissors = 0;
+        this->viewports_dirty = false;
+        this->scissors_dirty = false;
+        this->vertex_buffer_views_dirty = 0;
+        this->dynamic_state = dynamic_state_t();
+        this->dynamic_state_dirty = false;
+        this->index_type = VK_INDEX_TYPE_UINT16;
+    }
+
+    auto end() -> void {
+        this->command_list->Close();
+        // TODO: error handling
+    }
+
+    auto device() -> ID3D12Device3* {
+        return this->_device->device.Get();
+    }
+
+    auto update_user_data(
+        pipeline_slot_t& slot,
+        std::function<void (UINT slot, uint32_t data, UINT offset)> set_constant,
+        std::function<void (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle)> set_table
+    ) {
+        auto user_data { slot.root_data };
+        if (user_data.dirty.none()) {
+            return;
+        }
+
+        const auto start_cbv_srv_uav { this->heap_cbv_srv_uav->GetGPUDescriptorHandleForHeapStart() };
+        const auto start_sampler { this->heap_sampler->GetGPUDescriptorHandleForHeapStart() };
+
+        const auto num_root_constant_entries { slot.pipeline->root_constants.size() };
+        const auto num_table_entries { slot.pipeline->num_signature_entries };
+
+        auto start_constant { 0u };
+        for (auto i : range(num_root_constant_entries)) {
+            auto const& root_constant { slot.pipeline->root_constants[i] };
+
+            for (auto c : range(start_constant, start_constant + root_constant.size / 4)) {
+                if (user_data.dirty[c]) {
+                    set_constant(
+                        static_cast<UINT>(i),
+                        user_data.data[c],
+                        c - start_constant
+                    );
+                    user_data.dirty.reset(c);
+                }
+            }
+
+            start_constant += root_constant.size / 4;
+        }
+
+        for (auto i : range(num_table_entries)) {
+            const auto data_slot { slot.pipeline->num_root_constants + i };
+            if (user_data.dirty[data_slot]) {
+                const auto offset { user_data.data[data_slot] };
+                SIZE_T descriptor_start { 0u };
+                switch (user_data.type[data_slot]) {
+                    case pipeline_slot_t::data_entry_type::CBV_SRV_UAV: descriptor_start = start_cbv_srv_uav.ptr; break;
+                    case pipeline_slot_t::data_entry_type::SAMPLER: descriptor_start = start_sampler.ptr; break;
+                    default: WARN("Unexpected user data entry: {}", static_cast<uint32_t>(user_data.type[i]));
+                }
+
+                const auto handle { D3D12_GPU_DESCRIPTOR_HANDLE { descriptor_start + offset } };
+                set_table(
+                    static_cast<UINT>(num_root_constant_entries + i),
+                    handle
+                );
+                user_data.dirty.reset(data_slot);
+            }
+        }
+    }
+
+    auto bind_graphics_slot(draw_type draw_type) -> void {
+        if (!this->active_slot) {
+            std::array<ID3D12DescriptorHeap *const, 2> heaps {
+                this->heap_cbv_srv_uav,
+                this->heap_sampler
+            };
+            this->command_list->SetDescriptorHeaps(2, &heaps[0]);
+        }
+
+
+        if (
+            (this->dynamic_state_dirty && this->graphics_slot.pipeline->dynamic_states) ||
+            this->active_slot != SLOT_GRAPHICS // Check if we are switching to Graphics
+        ) {
+            this->active_pipeline = nullptr;
+        }
+
+        if (!this->active_pipeline) {
+            this->command_list->SetPipelineState(
+                std::visit(
+                    stdx::match(
+                        [] (pipeline_t::unique_pso_t& pso) {
+                            return pso.pipeline.Get();
+                        },
+                        [&] (pipeline_t::dynamic_pso_t& pso) {
+                            // Check if we have one available already
+                            {
+                                auto dynamic_state { this->dynamic_state };
+                                this->graphics_slot.pipeline->pso_access.lock_shared();
+                                switch (draw_type) {
+                                    case draw_type::DRAW: {
+                                        // Check all three strip cut variants
+                                        dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+                                        auto pipeline { pso.pipelines.find(dynamic_state) };
+                                        if (pipeline != pso.pipelines.end()) {
+                                            return pipeline->second.Get();
+                                        }
+                                        dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF;
+                                        pipeline = pso.pipelines.find(dynamic_state);
+                                        if (pipeline != pso.pipelines.end()) {
+                                            return pipeline->second.Get();
+                                        }
+                                        dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF;
+                                        pipeline = pso.pipelines.find(dynamic_state);
+                                        if (pipeline != pso.pipelines.end()) {
+                                            return pipeline->second.Get();
+                                        }
+                                    } break;
+                                    case draw_type::DRAW_INDEXED: {
+                                        if (graphics_slot.pipeline->dynamic_states & DYNAMIC_STATE_PRIMITIVE_RESTART) {
+                                            switch (index_type) {
+                                                case VK_INDEX_TYPE_UINT16:
+                                                    dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF;
+                                                    break;
+                                                case VK_INDEX_TYPE_UINT32:
+                                                    dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF;
+                                                    break;
+                                            }
+                                        } else {
+                                            dynamic_state.strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+                                        }
+
+                                        auto pipeline { pso.pipelines.find(dynamic_state) };
+                                        if (pipeline != pso.pipelines.end()) {
+                                            return pipeline->second.Get();
+                                        }
+                                    } break;
+                                }
+                                this->graphics_slot.pipeline->pso_access.unlock_shared();
+                            }
+
+                            // Generate a new one
+                            auto shader_bc = [] (ComPtr<ID3DBlob> shader) {
+                                return shader ?
+                                    D3D12_SHADER_BYTECODE { shader->GetBufferPointer(), shader->GetBufferSize() } :
+                                    D3D12_SHADER_BYTECODE { 0, 0 };
+                            };
+
+                            // Apply currently set dynamic state values
+                            const auto dynamics { this->graphics_slot.pipeline->dynamic_states };
+                            auto const& dynamic_state { this->dynamic_state };
+
+                            auto rasterizer_state { pso.rasterizer_state };
+                            if (dynamics & DYNAMIC_STATE_DEPTH_BIAS) {
+                                rasterizer_state.DepthBias = dynamic_state.depth_bias;
+                                rasterizer_state.DepthBiasClamp = dynamic_state.depth_bias_clamp;
+                                rasterizer_state.SlopeScaledDepthBias = dynamic_state.depth_bias_slope;
+                            }
+
+                            auto depth_stencil_state { pso.depth_stencil_state };
+                            if (dynamics & DYNAMIC_STATE_STENCIL_COMPARE_MASK) {
+                                depth_stencil_state.StencilReadMask = dynamic_state.stencil_read_mask;
+                            }
+                            if (dynamics & DYNAMIC_STATE_STENCIL_WRITE_MASK) {
+                                depth_stencil_state.StencilWriteMask = dynamic_state.stencil_write_mask;
+                            }
+
+                            D3D12_GRAPHICS_PIPELINE_STATE_DESC desc {
+                                this->graphics_slot.pipeline->signature,
+                                shader_bc(pso.vertex_shader),
+                                shader_bc(pso.pixel_shader),
+                                shader_bc(pso.domain_shader),
+                                shader_bc(pso.hull_shader),
+                                shader_bc(pso.geometry_shader),
+                                D3D12_STREAM_OUTPUT_DESC { }, // not used
+                                pso.blend_state,
+                                pso.sample_mask,
+                                rasterizer_state,
+                                depth_stencil_state,
+                                D3D12_INPUT_LAYOUT_DESC {
+                                    pso.input_elements.data(),
+                                    static_cast<UINT>(pso.input_elements.size())
+                                },
+                                dynamic_state.strip_cut,
+                                pso.topology_type,
+                                pso.num_render_targets,
+                                pso.rtv_formats[0], pso.rtv_formats[1], pso.rtv_formats[2], pso.rtv_formats[3],
+                                pso.rtv_formats[4], pso.rtv_formats[5], pso.rtv_formats[6], pso.rtv_formats[7],
+                                pso.dsv_format,
+                                pso.sample_desc,
+                                0, // NodeMask
+                                D3D12_CACHED_PIPELINE_STATE { }, // TODO
+                                D3D12_PIPELINE_STATE_FLAG_NONE, // TODO
+                            };
+
+                            ComPtr<ID3D12PipelineState> pipeline;
+                            auto const hr { this->device()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pipeline)) };
+                            // TODO: error handling
+
+                            this->graphics_slot.pipeline->pso_access.lock();
+                            pso.pipelines.emplace(dynamic_state, pipeline);
+                            this->graphics_slot.pipeline->pso_access.unlock();
+
+                            return pipeline.Get();
+                        }
+                    ),
+                    this->graphics_slot.pipeline->pso
+                )
+            );
+        }
+
+        this->active_slot = SLOT_GRAPHICS;
+
+        if (this->viewports_dirty) {
+            this->command_list->RSSetViewports(
+                this->num_viewports_scissors,
+                this->viewports
+            );
+            this->viewports_dirty = false;
+        }
+
+        if (this->scissors_dirty) {
+            this->command_list->RSSetScissorRects(
+                this->num_viewports_scissors,
+                this->scissors
+            );
+            this->scissors_dirty = false;
+        }
+
+        if (this->vertex_buffer_views_dirty.any()) {
+            std::optional<size_t> in_range { std::nullopt };
+            for (auto i : range(MAX_VERTEX_BUFFER_SLOTS)) {
+                const auto has_flag { this->vertex_buffer_views_dirty[i] };
+
+                if (has_flag) {
+                    this->vertex_buffer_views_dirty.reset(i);
+                    if (!in_range) {
+                        in_range = i;
+                    }
+                } else if (in_range) {
+                    this->command_list->IASetVertexBuffers(
+                        static_cast<UINT>(*in_range),
+                        static_cast<UINT>(i - *in_range),
+                        this->vertex_buffer_views
+                    );
+                    in_range = std::nullopt;
+                }
+            }
+
+            if (in_range) {
+                this->command_list->IASetVertexBuffers(
+                    static_cast<UINT>(*in_range),
+                    static_cast<UINT>(MAX_VERTEX_BUFFER_SLOTS - *in_range),
+                    this->vertex_buffer_views
+                );
+            }
+        }
+
+        update_user_data(
+            this->graphics_slot,
+            [&] (UINT slot, uint32_t data, UINT offset) {
+                this->command_list->SetGraphicsRoot32BitConstant(
+                    slot,
+                    data,
+                    offset
+                );
+            },
+            [&] (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle) {
+                this->command_list->SetGraphicsRootDescriptorTable(
+                    slot,
+                    handle
+                );
+            }
+        );
+    }
+
+    auto bind_compute_slot() -> void {
+        if (!this->active_slot) {
+            std::array<ID3D12DescriptorHeap *const, 2> heaps {
+                this->heap_cbv_srv_uav,
+                this->heap_sampler
+            };
+            this->command_list->SetDescriptorHeaps(2, &heaps[0]);
+        }
+
+        if (this->active_slot != SLOT_COMPUTE) {
+            this->active_pipeline = nullptr;
+            this->active_slot = SLOT_COMPUTE;
+        }
+
+        if (!this->active_pipeline) {
+            this->command_list->SetPipelineState(
+                std::get<pipeline_t::unique_pso_t>(this->compute_slot.pipeline->pso).pipeline.Get()
+            );
+        }
+
+        update_user_data(
+            this->compute_slot,
+            [&] (UINT slot, uint32_t data, UINT offset) {
+                this->command_list->SetComputeRoot32BitConstant(
+                    slot,
+                    data,
+                    offset
+                );
+            },
+            [&] (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle) {
+                this->command_list->SetComputeRootDescriptorTable(
+                    slot,
+                    handle
+                );
+            }
+        );
+    }
+
+
+    auto begin_subpass(VkSubpassContents contents) -> void {
+        // TODO: contents
+
+        auto const& pass_cache { *this->pass_cache };
+        auto clear_values { span<const VkClearValue>(pass_cache.clear_values) };
+        auto framebuffer { pass_cache.framebuffer };
+        auto render_pass { pass_cache.render_pass };
+
+        const auto subpass_id { pass_cache.subpass };
+        auto const& subpass { render_pass->subpasses[subpass_id] };
+
+        // Clear attachments on first use
+        for (auto const& color_attachment : subpass.color_attachments) {
+            if (color_attachment.attachment == VK_ATTACHMENT_UNUSED) {
+                continue;
+            }
+
+            auto const& attachment { render_pass->attachments[color_attachment.attachment] };
+            if (attachment.first_use == subpass_id) {
+                auto view { framebuffer->attachments[color_attachment.attachment] };
+                if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
+                    // TODO: temp barriers...
+                    this->command_list->ResourceBarrier(1,
+                        &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET)
+                    );
+                    this->command_list->ClearRenderTargetView(
+                        std::get<0>(*view->rtv),
+                        clear_values[color_attachment.attachment].color.float32,
+                        1,
+                        &pass_cache.render_area
+                    );
+                }
+            }
+        }
+
+        const auto depth_attachment { subpass.depth_attachment.attachment };
+        if (depth_attachment != VK_ATTACHMENT_UNUSED) {
+            auto const& attachment {
+                render_pass->attachments[depth_attachment]
+            };
+
+            if (attachment.first_use == subpass_id) {
+                auto view { framebuffer->attachments[depth_attachment] };
+
+                D3D12_CLEAR_FLAGS clear_flags { static_cast<D3D12_CLEAR_FLAGS>(0) };
+                float depth { 0 };
+                UINT8 stencil { 0 };
+
+                if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
+                    clear_flags |= D3D12_CLEAR_FLAG_DEPTH;
+                    depth = clear_values[depth_attachment].depthStencil.depth;
+                }
+
+                // TODO: stencil
+
+                if (clear_flags) {
+                    // TODO: temp barriers...
+                    this->command_list->ResourceBarrier(1,
+                        &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE)
+                    );
+                    this->command_list->ClearDepthStencilView(
+                        std::get<0>(*view->dsv),
+                        clear_flags,
+                        depth,
+                        stencil,
+                        1,
+                        &pass_cache.render_area
+                    );
+                }
+            }
+        }
+
+        // Bind render targets
+        auto color_attachments { span<const VkAttachmentReference>(subpass.color_attachments) };
+        const auto num_rtvs { color_attachments.size() };
+        D3D12_CPU_DESCRIPTOR_HANDLE render_targets[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT];
+        for (auto i : range(num_rtvs)) {
+            // TODO: support VK_ATTACHMENT_UNUSED
+            const auto color_attachment { color_attachments[i].attachment };
+            assert(color_attachment != VK_ATTACHMENT_UNUSED);
+            render_targets[i] = std::get<0>(*framebuffer->attachments[color_attachment]->rtv);
+        }
+
+        D3D12_CPU_DESCRIPTOR_HANDLE* dsv { nullptr };
+        if (depth_attachment != VK_ATTACHMENT_UNUSED) {
+            dsv = &std::get<0>(*framebuffer->attachments[depth_attachment]->dsv);
+        }
+
+        this->command_list->OMSetRenderTargets(
+            static_cast<UINT>(num_rtvs),
+            render_targets,
+            !!dsv,
+            dsv
+        );
+    }
+
+    auto end_subpass() -> void {
+        auto const& pass_cache { *this->pass_cache };
+        auto framebuffer { pass_cache.framebuffer };
+        auto render_pass { pass_cache.render_pass };
+
+        const auto subpass_id { pass_cache.subpass };
+        auto const& subpass { render_pass->subpasses[subpass_id] };
+
+        // Clear attachments on first use
+        // TODO
+        for (auto const& color_attachment : subpass.color_attachments) {
+            if (color_attachment.attachment == VK_ATTACHMENT_UNUSED) {
+                continue;
+            }
+
+            auto const& attachment { render_pass->attachments[color_attachment.attachment] };
+            if (attachment.first_use == subpass_id) {
+                auto view { framebuffer->attachments[color_attachment.attachment] };
+                if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
+                    // TODO: temp barriers...
+                    this->command_list->ResourceBarrier(1,
+                        &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COMMON)
+                    );
+                }
+            }
+        }
+
+        const auto depth_attachment { subpass.depth_attachment.attachment };
+        if (depth_attachment != VK_ATTACHMENT_UNUSED) {
+            auto const& attachment {
+                render_pass->attachments[depth_attachment]
+            };
+
+            if (attachment.first_use == subpass_id) {
+                auto view { framebuffer->attachments[depth_attachment] };
+
+                if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
+                    // TODO: temp barriers...
+                    this->command_list->ResourceBarrier(1,
+                        &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COMMON)
+                    );
+                }
+            }
+        }
+    }
+
+private:
+    /// Dispatchable object
+    uintptr_t loader_magic;
+
+public:
+    //
+    ComPtr<ID3D12GraphicsCommandList2> command_list;
+    std::optional<pipeline_slot_type> active_slot;
+    ID3D12PipelineState* active_pipeline;
+
+    ID3D12DescriptorHeap* heap_cbv_srv_uav;
+    ID3D12DescriptorHeap* heap_sampler;
+
+    bool dynamic_state_dirty;
+    bool viewports_dirty;
+    bool scissors_dirty;
+    std::bitset<MAX_VERTEX_BUFFER_SLOTS> vertex_buffer_views_dirty;
+
+    // Currently set dynamic state
+    dynamic_state_t dynamic_state;
+    VkIndexType index_type;
+
+    device_t* _device;
+
+    // Owning command allocator, required for reset
+    ID3D12CommandAllocator* allocator;
+
+    std::optional<pass_cache_t> pass_cache;
+
+    pipeline_slot_t graphics_slot;
+    pipeline_slot_t compute_slot;
+
+    D3D12_VIEWPORT viewports[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+    D3D12_RECT scissors[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+    UINT num_viewports_scissors;
+
+    // Stride values are not known when calling `vkCmdBindVertexBuffers`
+    D3D12_VERTEX_BUFFER_VIEW vertex_buffer_views[MAX_VERTEX_BUFFER_SLOTS];
+
+    std::vector<ComPtr<ID3D12DescriptorHeap>> temp_heaps;
+};
+
+struct semaphore_t {
+    ComPtr<ID3D12Fence> fence;
+};
+
+struct surface_t {
+    ComPtr<IDXGIFactory5> dxgi_factory;
+    HWND hwnd;
+};
+
+struct swapchain_t {
+    ComPtr<IDXGISwapChain3> swapchain;
+    std::vector<image_t> images;
 };
 
 struct buffer_t {
@@ -1858,6 +1863,32 @@ auto compile_shader(std::string_view stage, std::string_view entry, std::string_
 
     return shader_blob;
 };
+
+auto create_command_signature(
+    ID3D12Device* device,
+    D3D12_INDIRECT_ARGUMENT_TYPE type,
+    UINT stride
+) -> ComPtr<ID3D12CommandSignature> {
+    const D3D12_INDIRECT_ARGUMENT_DESC argument { type };
+    const D3D12_COMMAND_SIGNATURE_DESC desc {
+        stride,
+        1,
+        &argument,
+        0u,
+    };
+
+    ComPtr<ID3D12CommandSignature> signature { nullptr };
+    auto const hr {
+        device->CreateCommandSignature(
+            &desc,
+            nullptr, // not required
+            IID_PPV_ARGS(&signature)
+        )
+    };
+    // TODO: error handling
+
+    return signature;
+}
 
 // ------------------------------------- API implementations
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(
@@ -2138,6 +2169,13 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(
                 ERR("Unexpected queue family index: {}", family_index);
         }
     }
+
+    // Indirect execution command signature
+    device->dispatch_indirect = create_command_signature(
+        raw_device.Get(),
+        D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH,
+        sizeof(D3D12_DISPATCH_ARGUMENTS)
+    );
 
     // CmdCopyBufferToImage compute shader
     {
@@ -3046,8 +3084,12 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(
         0, // TODO
         info.extent.width,
         info.extent.height,
-        dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? info.extent.depth : info.arrayLayers,
-        info.mipLevels,
+        static_cast<UINT16>(
+            dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+                info.extent.depth :
+                info.arrayLayers
+        ),
+        static_cast<UINT16>(info.mipLevels),
         format,
         { 1, 0 }, // TODO
         D3D12_TEXTURE_LAYOUT_UNKNOWN, // TODO
@@ -3700,7 +3742,13 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
             shader_bc(domain_shader),
             shader_bc(hull_shader),
             shader_bc(geometry_shader),
-            D3D12_STREAM_OUTPUT_DESC { }, // not used
+            D3D12_STREAM_OUTPUT_DESC { // not used
+                nullptr,
+                0u,
+                nullptr,
+                0u,
+                0u,
+            },
             blend_desc,
             ~0u, // TODO: sample mask
             rasterizer_desc,
@@ -4097,7 +4145,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSampler(
         address_mode(info.addressModeV),
         address_mode(info.addressModeW),
         info.mipLodBias,
-        info.maxAnisotropy,
+        static_cast<UINT>(info.maxAnisotropy),
         compare_op(info.compareOp),
         border_color[0], border_color[1], border_color[2], border_color[3],
         info.minLod,
@@ -4359,10 +4407,10 @@ VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(
 
         if (!dst_descriptor_range_starts.empty()) {
             (*device)->CopyDescriptors(
-                dst_descriptor_range_starts.size(),
+                static_cast<UINT>(dst_descriptor_range_starts.size()),
                 dst_descriptor_range_starts.data(),
                 dst_descriptor_range_sizes.data(),
-                src_descriptor_range_starts.size(),
+                static_cast<UINT>(src_descriptor_range_starts.size()),
                 src_descriptor_range_starts.data(),
                 src_descriptor_range_sizes.data(),
                 ty
@@ -4795,9 +4843,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateCommandBuffers(
 
         command_buffer->allocator = pool.allocator.Get();
         command_buffer->command_list = command_list;
-        command_buffer->device = device->device.Get();
-        command_buffer->pso_buffer_to_image = device->pso_buffer_to_image.Get();
-        command_buffer->signature_buffer_to_image = device->signature_buffer_to_image.Get();
+        command_buffer->_device = device;
 
         pCommandBuffers[i] = reinterpret_cast<VkCommandBuffer>(command_buffer);
     }
@@ -4888,14 +4934,14 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
             // Apply static states
             if (pipeline->static_viewports) {
                 (*command_buffer)->RSSetViewports(
-                    pipeline->static_viewports->size(),
+                    static_cast<UINT>(pipeline->static_viewports->size()),
                     pipeline->static_viewports->data()
                 );
                 command_buffer->viewports_dirty = false;
             }
             if (pipeline->static_scissors) {
                 (*command_buffer)->RSSetScissorRects(
-                    pipeline->static_scissors->size(),
+                    static_cast<UINT>(pipeline->static_scissors->size()),
                     pipeline->static_scissors->data()
                 );
                 command_buffer->scissors_dirty = false;
@@ -5015,7 +5061,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBias(
     TRACE("vkCmdSetDepthBias");
 
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
-    command_buffer->dynamic_state.depth_bias = depthBiasConstantFactor;
+    command_buffer->dynamic_state.depth_bias = static_cast<INT>(depthBiasConstantFactor);
     command_buffer->dynamic_state.depth_bias_clamp = depthBiasClamp;
     command_buffer->dynamic_state.depth_bias_slope = depthBiasSlopeFactor;
     command_buffer->dynamic_state_dirty = true;
@@ -5125,14 +5171,14 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(
             if (set->start_cbv_srv_uav) {
                 // Only storing relative address, less storage needed
                 const auto set_offset { set->start_cbv_srv_uav->ptr - start_cbv_srv_uav.ptr };
-                pipeline.root_data.set_cbv_srv_uav(entry, set_offset);
+                pipeline.root_data.set_cbv_srv_uav(entry, static_cast<uint32_t>(set_offset));
 
                 entry += 1;
             }
             if (set->start_sampler) {
                 // Only storing relative address, less storage needed
                 const auto set_offset { set->start_sampler->ptr - start_sampler.ptr };
-                pipeline.root_data.set_sampler(entry, set_offset);
+                pipeline.root_data.set_sampler(entry, static_cast<uint32_t>(set_offset));
 
                 entry += 1;
             }
@@ -5244,25 +5290,91 @@ VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexed(
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndirect(
-    VkCommandBuffer                             commandBuffer,
-    VkBuffer                                    buffer,
+    VkCommandBuffer                             _commandBuffer,
+    VkBuffer                                    _buffer,
     VkDeviceSize                                offset,
     uint32_t                                    drawCount,
     uint32_t                                    stride
 ) {
     TRACE("vkCmdDrawIndirect");
-    WARN("vkCmdDrawIndirect unimplemented");
+
+    auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
+    auto buffer { reinterpret_cast<buffer_t *>(_buffer) };
+
+    auto get_signature = [&] () {
+        {
+            std::shared_lock<std::shared_mutex> lock(command_buffer->_device->draw_indirect_access);
+            auto signature { command_buffer->_device->draw_indirect.find(stride) };
+            if (signature != command_buffer->_device->draw_indirect.end()) {
+                return signature->second.Get();
+            }
+        }
+
+        auto signature = create_command_signature(
+            command_buffer->device(),
+            D3D12_INDIRECT_ARGUMENT_TYPE_DRAW,
+            stride
+        );
+
+        std::scoped_lock<std::shared_mutex> lock(command_buffer->_device->draw_indirect_access);
+        command_buffer->_device->draw_indirect.emplace(stride, signature);
+        return signature.Get();
+    };
+
+    command_buffer->bind_graphics_slot(draw_type::DRAW);
+    const auto signature = get_signature();
+    (*command_buffer)->ExecuteIndirect(
+        signature,
+        drawCount,
+        buffer->resource.Get(),
+        offset,
+        nullptr,
+        0
+    );
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexedIndirect(
-    VkCommandBuffer                             commandBuffer,
-    VkBuffer                                    buffer,
+    VkCommandBuffer                             _commandBuffer,
+    VkBuffer                                    _buffer,
     VkDeviceSize                                offset,
     uint32_t                                    drawCount,
     uint32_t                                    stride
 ) {
     TRACE("vkCmdDrawIndexedIndirect");
-    WARN("vkCmdDrawIndexedIndirect unimplemented");
+
+    auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
+    auto buffer { reinterpret_cast<buffer_t *>(_buffer) };
+
+    auto get_signature = [&] () {
+        {
+            std::shared_lock<std::shared_mutex> lock(command_buffer->_device->draw_indirect_access);
+            auto signature { command_buffer->_device->draw_indexed_indirect.find(stride) };
+            if (signature != command_buffer->_device->draw_indexed_indirect.end()) {
+                return signature->second.Get();
+            }
+        }
+
+        auto signature = create_command_signature(
+            command_buffer->device(),
+            D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED,
+            stride
+        );
+
+        std::scoped_lock<std::shared_mutex> lock(command_buffer->_device->draw_indirect_access);
+        command_buffer->_device->draw_indexed_indirect.emplace(stride, signature);
+        return signature.Get();
+    };
+
+    command_buffer->bind_graphics_slot(draw_type::DRAW_INDEXED);
+    const auto signature = get_signature();
+    (*command_buffer)->ExecuteIndirect(
+        signature,
+        drawCount,
+        buffer->resource.Get(),
+        offset,
+        nullptr,
+        0
+    );
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdDispatch(
@@ -5684,16 +5796,16 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
     // Slow path starts here ->
     ComPtr<ID3D12DescriptorHeap> temp_heap { nullptr };
     const UINT handle_size {
-        command_buffer->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
+        command_buffer->device()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
     };
     {
         const D3D12_DESCRIPTOR_HEAP_DESC desc {
             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-            num_cs_regions,
+            static_cast<UINT>(num_cs_regions),
             D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
-            0
+            0u
         };
-        auto const hr { command_buffer->device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&temp_heap)) };
+        auto const hr { command_buffer->device()->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&temp_heap)) };
     }
 
     command_buffer->temp_heaps.push_back(temp_heap);
@@ -5701,8 +5813,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
     const auto start_cpu = temp_heap->GetCPUDescriptorHandleForHeapStart();
     const auto start_gpu = temp_heap->GetGPUDescriptorHandleForHeapStart();
 
-    (*command_buffer)->SetPipelineState(command_buffer->pso_buffer_to_image);
-    (*command_buffer)->SetComputeRootSignature(command_buffer->signature_buffer_to_image);
+    (*command_buffer)->SetPipelineState(command_buffer->_device->pso_buffer_to_image.Get());
+    (*command_buffer)->SetComputeRootSignature(command_buffer->_device->signature_buffer_to_image.Get());
     std::array<ID3D12DescriptorHeap *const, 1> heaps { temp_heap.Get() };
     (*command_buffer)->SetDescriptorHeaps(1, &heaps[0]);
 
@@ -5721,7 +5833,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
         };
         (*command_buffer)->SetComputeRoot32BitConstants(
             2,
-            constant_data.size(),
+            static_cast<UINT>(constant_data.size()),
             constant_data.data(),
             0
         );
@@ -5734,7 +5846,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                 D3D12_UAV_DIMENSION_TEXTURE2DARRAY
             };
             uav_desc.Texture2DArray = D3D12_TEX2D_ARRAY_UAV { region.mip_level, region.array_layer, 1, 0 };
-            command_buffer->device->CreateUnorderedAccessView(
+            command_buffer->device()->CreateUnorderedAccessView(
                 dst_image->resource.Get(),
                 nullptr,
                 &uav_desc,
