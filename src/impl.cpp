@@ -1935,7 +1935,67 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures(
     VkPhysicalDeviceFeatures*                   pFeatures
 ) {
     TRACE("vkGetPhysicalDeviceFeatures");
-    log()->warn("vkGetPhysicalDeviceFeatures unimplemented");
+
+    // TODO
+    *pFeatures = VkPhysicalDeviceFeatures {
+        true, // robustBufferAccess
+        true, // fullDrawIndexUint32
+        true, // imageCubeArray
+        true, // independentBlend
+        false, // geometryShader // TODO
+        false, // tessellationShader // TODO
+        false, // sampleRateShading // TODO ?
+        true, // dualSrcBlend
+        false, // logicOp // TODO: optional for 11_0
+        true, // multiDrawIndirect
+        true, // drawIndirectFirstInstance
+        true, // depthClamp
+        true, // depthBiasClamp
+        true, // fillModeNonSolid // TODO: point is still hairy
+        true, // depthBounds // TODO: older dx12 versions
+        false, // wideLines
+        false, // largePoints // TODO
+        true, // alphaToOne
+        true, // multiViewport
+        true, // samplerAnisotropy
+        false, // textureCompressionETC2
+        false, // textureCompressionASTC_LDR
+        true, // textureCompressionBC
+
+        // TODO
+        false, // occlusionQueryPrecise
+        false, // pipelineStatisticsQuery
+        false, // vertexPipelineStoresAndAtomics
+        false, // fragmentStoresAndAtomics
+        false, // shaderTessellationAndGeometryPointSize
+        false, // shaderImageGatherExtended
+        false, // shaderStorageImageExtendedFormats
+        false, // shaderStorageImageMultisample
+        false, // shaderStorageImageReadWithoutFormat
+        false, // shaderStorageImageWriteWithoutFormat
+        false, // shaderUniformBufferArrayDynamicIndexing
+        false, // shaderSampledImageArrayDynamicIndexing
+        false, // shaderStorageBufferArrayDynamicIndexing
+        false, // shaderStorageImageArrayDynamicIndexing
+        false, // shaderClipDistance
+        false, // shaderCullDistance
+        false, // shaderFloat64
+        false, // shaderInt64
+        false, // shaderInt16
+        false, // shaderResourceResidency
+        false, // shaderResourceMinLod
+        false, // sparseBinding
+        false, // sparseResidencyBuffer
+        false, // sparseResidencyImage2D
+        false, // sparseResidencyImage3D
+        false, // sparseResidency2Samples
+        false, // sparseResidency4Samples
+        false, // sparseResidency8Samples
+        false, // sparseResidency16Samples
+        false, // sparseResidencyAliased
+        false, // variableMultisampleRate
+        false, // inheritedQueries
+    };
 }
 
 VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties(
@@ -5584,53 +5644,46 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                 (offset & (D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT-1)) == 0
             };
 
+            struct copy_region_t {
+                D3D12_PLACED_SUBRESOURCE_FOOTPRINT src_desc;
+                UINT dst_x;
+                UINT dst_y;
+                UINT dst_z;
+                D3D12_BOX box;
+            };
+
+            std::vector<copy_region_t> new_regions;
+
             if ((pitch_aligned || num_rows == 1)) {
                 // Interesting for the case of a single row, where we can just increase the pitch to whatever suites us
                 const auto single_row_pitch { up_align(raw_row_pitch, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) };
                 const auto row_pitch { num_rows > 1 ? raw_row_pitch : single_row_pitch };
                 const auto slice_pitch { row_pitch * num_rows };
 
-                const D3D12_TEXTURE_COPY_LOCATION dst_desc {
-                    dst_image->resource.Get(),
-                    D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
-                    D3D12CalcSubresource(
-                        level,
-                        layer,
-                        0,
-                        dst_image->resource_desc.MipLevels,
-                        dst_image->resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
-                            1 :
-                            dst_image->resource_desc.DepthOrArraySize
-                    )
-                };
-
                 if (offset_aligned) {
-                    const D3D12_TEXTURE_COPY_LOCATION src_desc {
-                        src_buffer->resource.Get(),
-                        D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
-                        D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
-                            offset,
-                            D3D12_SUBRESOURCE_FOOTPRINT {
-                                dst_image->resource_desc.Format,
-                                up_align(width, dst_image->block_data.width),
-                                up_align(height, dst_image->block_data.height),
-                                depth,
-                                row_pitch,
-                            }
+                    const D3D12_PLACED_SUBRESOURCE_FOOTPRINT src_desc {
+                        offset,
+                        D3D12_SUBRESOURCE_FOOTPRINT {
+                            dst_image->resource_desc.Format,
+                            up_align(width, dst_image->block_data.width),
+                            up_align(height, dst_image->block_data.height),
+                            depth,
+                            row_pitch,
                         }
                     };
 
-                    (*command_buffer)->CopyTextureRegion(
-                        &dst_desc,
-                        region.imageOffset.x,
-                        region.imageOffset.y,
-                        region.imageOffset.z,
-                        &src_desc,
-                        &D3D12_BOX {
-                            0, 0, 0,
-                            up_align(region.imageExtent.width, dst_image->block_data.width),
-                            up_align(region.imageExtent.height, dst_image->block_data.height),
-                            region.imageExtent.depth
+                    new_regions.emplace_back(
+                        copy_region_t {
+                            src_desc,
+                            static_cast<UINT>(region.imageOffset.x),
+                            static_cast<UINT>(region.imageOffset.y),
+                            static_cast<UINT>(region.imageOffset.z),
+                            D3D12_BOX {
+                                0, 0, 0,
+                                up_align(region.imageExtent.width, dst_image->block_data.width),
+                                up_align(region.imageExtent.height, dst_image->block_data.height),
+                                region.imageExtent.depth
+                            },
                         }
                     );
                 } else {
@@ -5670,105 +5723,96 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                     uint32_t row_pitch_texels = dst_image->block_data.width * row_pitch / byte_per_texel;
 
                     if (region.imageExtent.width + texel_offset_x <= row_pitch_texels) {
-                        const D3D12_TEXTURE_COPY_LOCATION src_desc {
-                            src_buffer->resource.Get(),
-                            D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
-                            D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
-                                aligned_offset,
-                                D3D12_SUBRESOURCE_FOOTPRINT {
-                                    dst_image->resource_desc.Format,
-                                    texel_offset_x + up_align(width, dst_image->block_data.width),
-                                    texel_offset_y + up_align(height, dst_image->block_data.height),
-                                    texel_offset_z + depth,
-                                    row_pitch,
-                                }
+                        const D3D12_PLACED_SUBRESOURCE_FOOTPRINT src_desc {
+                            aligned_offset,
+                            D3D12_SUBRESOURCE_FOOTPRINT {
+                                dst_image->resource_desc.Format,
+                                texel_offset_x + up_align(width, dst_image->block_data.width),
+                                texel_offset_y + up_align(height, dst_image->block_data.height),
+                                texel_offset_z + depth,
+                                row_pitch,
                             }
                         };
 
-                        (*command_buffer)->CopyTextureRegion(
-                            &dst_desc,
-                            region.imageOffset.x,
-                            region.imageOffset.y,
-                            region.imageOffset.z,
-                            &src_desc,
-                            &D3D12_BOX {
-                                texel_offset_x,
-                                texel_offset_y,
-                                texel_offset_z,
-                                texel_offset_x + up_align(region.imageExtent.width, dst_image->block_data.width),
-                                texel_offset_y + up_align(region.imageExtent.height, dst_image->block_data.height),
-                                texel_offset_z + region.imageExtent.depth,
+                        new_regions.emplace_back(
+                            copy_region_t {
+                                src_desc,
+                                static_cast<UINT>(region.imageOffset.x),
+                                static_cast<UINT>(region.imageOffset.y),
+                                static_cast<UINT>(region.imageOffset.z),
+                                D3D12_BOX {
+                                    texel_offset_x,
+                                    texel_offset_y,
+                                    texel_offset_z,
+                                    texel_offset_x + up_align(region.imageExtent.width, dst_image->block_data.width),
+                                    texel_offset_y + up_align(region.imageExtent.height, dst_image->block_data.height),
+                                    texel_offset_z + region.imageExtent.depth,
+                                },
                             }
                         );
                     } else {
                         {
-                            const D3D12_TEXTURE_COPY_LOCATION src_desc {
-                                src_buffer->resource.Get(),
-                                D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
-                                D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
-                                    aligned_offset,
-                                    D3D12_SUBRESOURCE_FOOTPRINT {
-                                        dst_image->resource_desc.Format,
-                                        row_pitch_texels,
-                                        texel_offset_y + up_align(height, dst_image->block_data.height),
-                                        texel_offset_z + depth,
-                                        row_pitch,
-                                    }
+                            const D3D12_PLACED_SUBRESOURCE_FOOTPRINT src_desc {
+                                aligned_offset,
+                                D3D12_SUBRESOURCE_FOOTPRINT {
+                                    dst_image->resource_desc.Format,
+                                    row_pitch_texels,
+                                    texel_offset_y + up_align(height, dst_image->block_data.height),
+                                    texel_offset_z + depth,
+                                    row_pitch,
                                 }
                             };
 
-                            (*command_buffer)->CopyTextureRegion(
-                                &dst_desc,
-                                region.imageOffset.x,
-                                region.imageOffset.y,
-                                region.imageOffset.z,
-                                &src_desc,
-                                &D3D12_BOX {
-                                    texel_offset_x,
-                                    texel_offset_y,
-                                    texel_offset_z,
-                                    row_pitch_texels,
-                                    texel_offset_y + up_align(region.imageExtent.height, dst_image->block_data.height),
-                                    texel_offset_z + region.imageExtent.depth,
+                            new_regions.emplace_back(
+                                copy_region_t {
+                                    src_desc,
+                                    static_cast<UINT>(region.imageOffset.x),
+                                    static_cast<UINT>(region.imageOffset.y),
+                                    static_cast<UINT>(region.imageOffset.z),
+                                    D3D12_BOX {
+                                        texel_offset_x,
+                                        texel_offset_y,
+                                        texel_offset_z,
+                                        row_pitch_texels,
+                                        texel_offset_y + up_align(region.imageExtent.height, dst_image->block_data.height),
+                                        texel_offset_z + region.imageExtent.depth,
+                                    },
                                 }
                             );
                         }
                         {
-                            const D3D12_TEXTURE_COPY_LOCATION src_desc {
-                                src_buffer->resource.Get(),
-                                D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
-                                D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
-                                    aligned_offset,
-                                    D3D12_SUBRESOURCE_FOOTPRINT {
-                                        dst_image->resource_desc.Format,
-                                        up_align(width, dst_image->block_data.width) - row_pitch_texels + texel_offset_x,
-                                        up_align(height, dst_image->block_data.height) + texel_offset_y + dst_image->block_data.height,
-                                        depth + texel_offset_z,
-                                        row_pitch,
-                                    }
+                            const D3D12_PLACED_SUBRESOURCE_FOOTPRINT src_desc {
+                                aligned_offset,
+                                D3D12_SUBRESOURCE_FOOTPRINT {
+                                    dst_image->resource_desc.Format,
+                                    up_align(width, dst_image->block_data.width) - row_pitch_texels + texel_offset_x,
+                                    up_align(height, dst_image->block_data.height) + texel_offset_y + dst_image->block_data.height,
+                                    depth + texel_offset_z,
+                                    row_pitch,
                                 }
                             };
 
-                            (*command_buffer)->CopyTextureRegion(
-                                &dst_desc,
-                                region.imageOffset.x + row_pitch_texels - texel_offset_x,
-                                region.imageOffset.y,
-                                region.imageOffset.z,
-                                &src_desc,
-                                &D3D12_BOX {
-                                    0,
-                                    texel_offset_y + dst_image->block_data.height,
-                                    texel_offset_z,
-                                    up_align(width, dst_image->block_data.width) - row_pitch_texels + texel_offset_x,
-                                    region.imageExtent.height + texel_offset_y + dst_image->block_data.height,
-                                    region.imageExtent.depth + texel_offset_z,
+                            new_regions.emplace_back(
+                                copy_region_t {
+                                    src_desc,
+                                    static_cast<UINT>(region.imageOffset.x + row_pitch_texels - texel_offset_x),
+                                    static_cast<UINT>(region.imageOffset.y),
+                                    static_cast<UINT>(region.imageOffset.z),
+                                    D3D12_BOX {
+                                        0,
+                                        texel_offset_y + dst_image->block_data.height,
+                                        texel_offset_z,
+                                        up_align(width, dst_image->block_data.width) - row_pitch_texels + texel_offset_x,
+                                        region.imageExtent.height + texel_offset_y + dst_image->block_data.height,
+                                        region.imageExtent.depth + texel_offset_z,
+                                    },
                                 }
                             );
                         }
                     }
                     // End texture splitting
                 }
-            } else {
+            } else if (false) {
                 // yay! compute shaders.... why???
                 // We will *never* hit this part on a copy queue except someone violates our
                 // exposed image granularity requirements
@@ -5783,6 +5827,44 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                         dst_image->block_data.bits,
                         region.imageExtent,
                     }
+                );
+            } else {
+                // Ultra-slow path, where we can't even use compute shaders..
+                if (offset_aligned) {
+                    INFO("checkmate");
+                } else {
+                    WARN("Ultra-slow offset unaligned path..");
+                }
+            };
+
+            const D3D12_TEXTURE_COPY_LOCATION dst_desc {
+                dst_image->resource.Get(),
+                D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                D3D12CalcSubresource(
+                    level,
+                    layer,
+                    0,
+                    dst_image->resource_desc.MipLevels,
+                    dst_image->resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+                        1 :
+                        dst_image->resource_desc.DepthOrArraySize
+                )
+            };
+
+            for (auto&& copy_region : new_regions) {
+                const D3D12_TEXTURE_COPY_LOCATION src_desc {
+                    src_buffer->resource.Get(),
+                    D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+                    copy_region.src_desc,
+                };
+
+                (*command_buffer)->CopyTextureRegion(
+                    &dst_desc,
+                    copy_region.dst_x,
+                    copy_region.dst_y,
+                    copy_region.dst_z,
+                    &src_desc,
+                    &copy_region.box
                 );
             }
         }
