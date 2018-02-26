@@ -30,7 +30,7 @@ Good luck!
 - triangle
 - pipelines
 - texture
-- texturecubmap (some mipmaps not loaded)
+- texturecubmap
 - texturearray
 - mesh
 - specialization constants
@@ -39,9 +39,9 @@ Good luck!
 - textoverlay
 - particlefire (small particles only)
 - scenerendering
-- HDR (some mipmaps not loaded)
-- instancing (some mipmaps not loaded)
-- indirect drawing (some mipmaps not loaded)
+- HDR
+- instancing
+- indirect drawing
 - shadowmapping
 - shadowmappingcascade
 - shadowmappingomni

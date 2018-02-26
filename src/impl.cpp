@@ -189,6 +189,10 @@ auto compare_op(VkCompareOp op) {
     }
 };
 
+auto up_align(UINT v, UINT alignment) -> UINT {
+    return (v + alignment - 1) & ~(alignment - 1);
+}
+
 // Forward declerations
 class instance_t;
 class device_t;
@@ -3052,9 +3056,12 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateBuffer(
     // Constant buffers view sizes need to be aligned (256).
     // Together with the offset alignment we can enforce an aligned CBV size.
     // without oversubscribing the buffer.
-    const auto size { (info.usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) ?
-        (info.size + 255) & ~255 :
-        info.size
+    auto size { info.size };
+    if (info.usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) {
+        size = up_align(size, 256);
+    };
+    if (info.usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT) {
+        size = up_align(size, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
     };
 
     const VkMemoryRequirements memory_requirements {
@@ -5623,12 +5630,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                 region.bufferImageHeight ? region.bufferImageHeight : region.imageExtent.height
             };
 
-            // In particular required for the case of block compressed formats and non-multiple width/height fields.
+            // Aligning, in particular required for the case of block compressed formats and non-multiple width/height fields.
             // TODO: verify the align parts, not totally confident it's correct in all circumstances
-            auto up_align = [] (UINT v, UINT alignment) {
-                return (v + alignment - 1) & ~(alignment - 1);
-            };
-
             const auto byte_per_texel { dst_image->block_data.bits / 8 };
             const auto num_rows { up_align(buffer_height, dst_image->block_data.height) / dst_image->block_data.height };
             const auto raw_row_pitch {
@@ -5831,75 +5834,79 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
             } else {
                 // Ultra-slow path, where we can't even use compute shaders..
                 // Manually stitching the texture together with one copy per buffer line
-                if (offset_aligned) {
-                    const auto row_pitch { up_align(raw_row_pitch, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) };
-                    const auto aligned_row_pitch { up_align(row_pitch, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT) };
-                    const auto buffer_width { dst_image->block_data.width * row_pitch / byte_per_texel };
+                // TODO: 3d textures heh
+                const auto aligned_offset {
+                    static_cast<UINT>(offset) & ~(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1u)
+                };
+                const auto row_pitch { up_align(raw_row_pitch, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) };
+                const auto aligned_row_pitch { up_align(row_pitch, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT) };
+                const auto buffer_width { dst_image->block_data.width * row_pitch / byte_per_texel };
+                auto buffer_height { height * raw_row_pitch / row_pitch };
 
-                    for (auto y : range(num_rows)) {
-                        const D3D12_PLACED_SUBRESOURCE_FOOTPRINT src_desc {
-                            offset,
-                            D3D12_SUBRESOURCE_FOOTPRINT {
-                                dst_image->resource_desc.Format,
-                                buffer_width,
-                                up_align(std::max(1u, height * raw_row_pitch / row_pitch), dst_image->block_data.height),
+                const auto diff_offset { static_cast<UINT>(offset) - aligned_offset };
+                if (diff_offset > 0) {
+                    buffer_height += 2; // Up to two additional rows due to ALIGNMENT offset? // TODO
+                }
+
+                for (auto y : range(num_rows)) {
+                    const D3D12_PLACED_SUBRESOURCE_FOOTPRINT src_desc {
+                        aligned_offset,
+                        D3D12_SUBRESOURCE_FOOTPRINT {
+                            dst_image->resource_desc.Format,
+                            buffer_width,
+                            up_align(std::max(1u, buffer_height), dst_image->block_data.height),
+                            1,
+                            row_pitch,
+                        }
+                    };
+
+                    const auto real_offset { diff_offset + y * raw_row_pitch };
+                    const auto aligned_real_offset { real_offset & ~(row_pitch - 1) };
+                    const auto offset_x { real_offset - aligned_real_offset };
+                    const auto offset_y { ((y * raw_row_pitch) & ~(row_pitch - 1)) / row_pitch };
+
+                    const auto buffer_texels { offset_x / byte_per_texel * dst_image->block_data.width };
+                    const auto default_region_width { dst_image->block_data.width * raw_row_pitch / byte_per_texel };
+                    const auto region_width = std::min(buffer_width, buffer_texels + default_region_width);
+
+                    new_regions.emplace_back(
+                        copy_region_t {
+                            src_desc,
+                            static_cast<UINT>(region.imageOffset.x),
+                            static_cast<UINT>(region.imageOffset.y) + y * dst_image->block_data.height,
+                            static_cast<UINT>(region.imageOffset.z),
+                            D3D12_BOX {
+                                buffer_texels,
+                                offset_y * dst_image->block_data.height,
+                                0,
+                                up_align(region_width, dst_image->block_data.width),
+                                (offset_y + 1) * dst_image->block_data.height,
                                 1,
-                                row_pitch,
-                            }
-                        };
+                            },
+                        }
+                    );
 
-                        const auto real_offset { y * raw_row_pitch };
-                        const auto aligned_real_offset { real_offset & ~(row_pitch - 1) };
-                        const auto offset_x { real_offset - aligned_real_offset };
-                        const auto offset_y { aligned_real_offset / row_pitch };
-
-                        const auto buffer_texels { offset_x / byte_per_texel };
-                        const auto default_region_width { dst_image->block_data.width * raw_row_pitch / byte_per_texel };
-                        const auto region_width = std::min(buffer_width, buffer_texels + default_region_width);
-
+                    if (buffer_width < buffer_texels + default_region_width) {
+                        // Splitted region, need to stitch again from the next line
                         new_regions.emplace_back(
                             copy_region_t {
                                 src_desc,
-                                static_cast<UINT>(region.imageOffset.x),
+                                static_cast<UINT>(region.imageOffset.x) + buffer_width - buffer_texels,
                                 static_cast<UINT>(region.imageOffset.y) + y * dst_image->block_data.height,
                                 static_cast<UINT>(region.imageOffset.z),
                                 D3D12_BOX {
-                                    buffer_texels,
-                                    offset_y * dst_image->block_data.height,
                                     0,
-                                    up_align(region_width, dst_image->block_data.width),
-                                    offset_y * dst_image->block_data.height + dst_image->block_data.height,
+                                    (offset_y + 1) * dst_image->block_data.height,
+                                    0,
+                                    (buffer_texels + default_region_width - buffer_width),
+                                    (offset_y + 2) * dst_image->block_data.height,
                                     1,
                                 },
                             }
                         );
-
-                        /*
-                        // TODO
-                        if (buffer_width < buffer_texels + default_region_width) {
-                            new_regions.emplace_back(
-                                copy_region_t {
-                                    src_desc,
-                                    static_cast<UINT>(region.imageOffset.x),
-                                    static_cast<UINT>(region.imageOffset.y) + y * dst_image->block_data.height,
-                                    static_cast<UINT>(region.imageOffset.z),
-                                    D3D12_BOX {
-                                        0,
-                                        (offset_y + 1) * dst_image->block_data.height,
-                                        0,
-                                        (buffer_texels + raw_row_pitch / byte_per_texel - buffer_width),
-                                        offset_y + dst_image->block_data.height,
-                                        1,
-                                    },
-                                }
-                            );
-                        }
-                        */
                     }
-
-                } else {
-                    WARN("Ultra-slow offset unaligned path..");
                 }
+
             };
 
             const D3D12_TEXTURE_COPY_LOCATION dst_desc {
