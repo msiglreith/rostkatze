@@ -48,8 +48,6 @@
 #include <stdx/hash.hpp>
 #include <stdx/match.hpp>
 #include <stdx/range.hpp>
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/msvc_sink.h>
 
 #include <spirv-cross/spirv_hlsl.hpp>
 
@@ -66,28 +64,6 @@
 using namespace gsl;
 using namespace stdx;
 using namespace Microsoft::WRL;
-
-auto init_logging() {
-    static auto initialized { false };
-    if (initialized) {
-        return;
-    }
-
-    initialized = true;
-    // spdlog::basic_logger_mt("rostkatze", "test.log");
-    spdlog::create<spdlog::sinks::msvc_sink_mt>("rostkatze");
-    spdlog::set_level(spdlog::level::debug);
-}
-
-auto log() {
-    return spdlog::get("rostkatze");
-}
-
-#define TRACE(...) log()->trace(__VA_ARGS__)
-#define DEBUG(...) log()->debug(__VA_ARGS__)
-#define INFO(...)  log()->info(__VA_ARGS__)
-#define WARN(...)  log()->warn(__VA_ARGS__)
-#define ERR(...)   log()->error(__VA_ARGS__)
 
 auto saturated_add(uint64_t x, uint64_t y) -> uint64_t {
     const auto result { x + y };
@@ -132,6 +108,47 @@ ConstantBuffer<Region> region : register(b0);
 void CopyBufferToImage(uint3 dispatch_thread_id : SV_DispatchThreadID) {
     dst[dispatch_thread_id.xy] =
         src.Load(4 * dispatch_thread_id.x + region.buffer_offset + region.buffer_row_length * dispatch_thread_id.y);
+}
+)";
+
+
+// TODO: Very basic implementation, doesnt handle offset correctly
+static const char* blit_2d_cs = R"(
+Texture2DArray src : register(t0);
+SamplerState src_sampler : register(s0);
+RWTexture2DArray<float4> dst : register(u1);
+
+struct Region {
+    int src_offset_x;
+    int src_offset_y;
+    int src_offset_z;
+
+    uint src_extent_x;
+    uint src_extent_y;
+    uint src_extent_z;
+
+    uint dst_offset_x;
+    uint dst_offset_y;
+    uint dst_offset_z;
+
+    uint dst_extent_x;
+    uint dst_extent_y;
+    uint dst_extent_z;
+};
+ConstantBuffer<Region> region : register(b0);
+
+[numthreads( 1, 1, 1 )]
+void BlitImage2D(uint3 dispatch_thread_id : SV_DispatchThreadID) {
+    float3 delta = float3(
+        float(dispatch_thread_id.x) / float(region.dst_extent_x),
+        float(dispatch_thread_id.y) / float(region.dst_extent_y),
+        float(dispatch_thread_id.z) / float(region.dst_extent_z)
+    );
+
+    uint3 dst_offset = uint3(region.dst_offset_x, region.dst_offset_y, region.dst_offset_z);
+    int3 src_offset = int3(region.src_offset_x, region.src_offset_y, region.src_offset_z);
+
+    dst[dispatch_thread_id] = src.SampleLevel(src_sampler, delta, src_offset);
 }
 )";
 
@@ -475,6 +492,14 @@ struct command_pool_t {
     ComPtr<ID3D12CommandAllocator> allocator;
 };
 
+struct image_t {
+    ComPtr<ID3D12Resource> resource;
+    D3D12_RESOURCE_ALLOCATION_INFO allocation_info;
+    D3D12_RESOURCE_DESC resource_desc;
+    format_block_t block_data;
+    VkImageUsageFlags usage;
+};
+
 // TODO: the whole structure could be stripped a bit
 //       and maybe precompute some more information on creation.
 struct render_pass_t {
@@ -760,16 +785,26 @@ public:
     }
 
     auto create_shader_resource_view(
-        ID3D12Resource* resource,
+        image_t *image,
         VkImageViewType type,
         DXGI_FORMAT format,
         VkComponentMapping components,
         VkImageSubresourceRange const& range
     ) -> std::tuple<D3D12_CPU_DESCRIPTOR_HANDLE, heap_index_t> {
         auto handle { this->descriptors_cpu_cbv_srv_uav.alloc() };
+        auto resource { image->resource.Get() };
 
-        // TODO
-        assert(range.layerCount != VK_REMAINING_ARRAY_LAYERS);
+        const auto layer_count {
+            range.layerCount == VK_REMAINING_ARRAY_LAYERS ?
+                image->resource_desc.DepthOrArraySize - range.baseArrayLayer :
+                range.layerCount
+        };
+        const auto level_count {
+            range.levelCount == VK_REMAINING_MIP_LEVELS ?
+                image->resource_desc.MipLevels - range.baseMipLevel :
+                range.levelCount
+        };
+
         // TODO: multisampling
 
         // TODO: other formats
@@ -812,23 +847,23 @@ public:
             desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
             desc.Texture1D = D3D12_TEX1D_SRV {
                 range.baseMipLevel,
-                range.levelCount,
+                level_count,
                 0.0 // TODO: ?
             };
         } else if (type == VK_IMAGE_VIEW_TYPE_1D || type == VK_IMAGE_VIEW_TYPE_1D_ARRAY) {
             desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
             desc.Texture1DArray = D3D12_TEX1D_ARRAY_SRV {
                 range.baseMipLevel,
-                range.levelCount,
+                level_count,
                 range.baseArrayLayer,
-                range.layerCount,
+                layer_count,
                 0.0 // TODO: ?
             };
         } else if (type == VK_IMAGE_VIEW_TYPE_2D && range.baseArrayLayer == 0) {
             desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
             desc.Texture2D = D3D12_TEX2D_SRV {
                 range.baseMipLevel,
-                range.levelCount,
+                level_count,
                 0,
                 0.0 // TODO: ?
             };
@@ -836,9 +871,9 @@ public:
             desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
             desc.Texture2DArray = D3D12_TEX2D_ARRAY_SRV {
                 range.baseMipLevel,
-                range.levelCount,
+                level_count,
                 range.baseArrayLayer,
-                range.layerCount,
+                layer_count,
                 0,
                 0.0 // TODO ?
             };
@@ -846,23 +881,23 @@ public:
             desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
             desc.TextureCube = D3D12_TEXCUBE_SRV {
                 range.baseMipLevel,
-                range.levelCount,
+                level_count,
                 0.0 // TODO ?
             };
         } else if (type == VK_IMAGE_VIEW_TYPE_CUBE || type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
             desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBEARRAY;
             desc.TextureCubeArray = D3D12_TEXCUBE_ARRAY_SRV {
                 range.baseMipLevel,
-                range.levelCount,
+                level_count,
                 range.baseArrayLayer,
-                range.layerCount / 6,
+                layer_count / 6,
                 0.0 // TODO ?
             };
         } else if (type == VK_IMAGE_VIEW_TYPE_3D) {
             desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
             desc.Texture3D = D3D12_TEX3D_SRV {
                 range.baseMipLevel,
-                range.levelCount,
+                level_count,
                 0.0 // TODO ?
             };
         }
@@ -961,7 +996,7 @@ public:
     descriptors_cpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 128> descriptors_cpu_sampler;
 
     // GPU descriptor heaps
-    descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1'000'000> descriptors_gpu_cbv_srv_uav;
+    descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 100'000> descriptors_gpu_cbv_srv_uav;
     descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 2048> descriptors_gpu_sampler;
 
     // Indirect execution signatures
@@ -973,6 +1008,9 @@ public:
 
     ComPtr<ID3D12PipelineState> pso_buffer_to_image { nullptr };
     ComPtr<ID3D12RootSignature> signature_buffer_to_image { nullptr };
+
+    ComPtr<ID3D12PipelineState> pso_blit_2d { nullptr };
+    ComPtr<ID3D12RootSignature> signature_blit_2d { nullptr };
 };
 
 class command_buffer_t {
@@ -1602,14 +1640,6 @@ struct buffer_t {
     ComPtr<ID3D12Resource> resource;
     VkMemoryRequirements memory_requirements;
     D3D12_RESOURCE_FLAGS usage_flags;
-};
-
-struct image_t {
-    ComPtr<ID3D12Resource> resource;
-    D3D12_RESOURCE_ALLOCATION_INFO allocation_info;
-    D3D12_RESOURCE_DESC resource_desc;
-    format_block_t block_data;
-    VkImageUsageFlags usage;
 };
 
 struct device_memory_t {
@@ -2310,6 +2340,105 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(
         {
             const auto hr {
                 (*device)->CreateComputePipelineState(&desc, IID_PPV_ARGS(&device->pso_buffer_to_image))
+            };
+
+            // TODO: error
+        }
+    }
+
+    // BlitImage2D compute shader
+    {
+        const D3D12_DESCRIPTOR_RANGE range[] = {
+            D3D12_DESCRIPTOR_RANGE {
+                D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+                1,
+                0,
+                0,
+                0,
+            },
+            D3D12_DESCRIPTOR_RANGE {
+                D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
+                1,
+                1,
+                0,
+                D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND,
+            },
+        };
+
+        D3D12_ROOT_PARAMETER parameters[2];
+        CD3DX12_ROOT_PARAMETER::InitAsDescriptorTable(
+            parameters[0],
+            2,
+            range
+        );
+        CD3DX12_ROOT_PARAMETER::InitAsConstants(parameters[1], 12, 0);
+
+        const D3D12_STATIC_SAMPLER_DESC static_sampler {
+            D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT, // TODO: nearest filter?
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            0.0,
+            0,
+            D3D12_COMPARISON_FUNC_ALWAYS,
+            D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK,
+            0.0,
+            D3D12_FLOAT32_MAX,
+            0,
+            0,
+            D3D12_SHADER_VISIBILITY_ALL,
+        };
+
+        const D3D12_ROOT_SIGNATURE_DESC signature_desc {
+            2,
+            parameters,
+            1,
+            &static_sampler,
+            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT,
+        };
+
+        ComPtr<ID3DBlob> signature_blob { nullptr };
+        {
+            ComPtr<ID3DBlob> error {nullptr };
+            auto const hr {
+                D3D12SerializeRootSignature(
+                    &signature_desc,
+                    D3D_ROOT_SIGNATURE_VERSION_1_0,
+                    &signature_blob,
+                    &error
+                )
+            };
+
+            if (error) {
+                ERR("D3D12SerializeRootSignature error: {}", error->GetBufferPointer());
+            }
+        }
+
+        auto const hr {
+            (*device)->CreateRootSignature(
+                0,
+                signature_blob->GetBufferPointer(),
+                signature_blob->GetBufferSize(),
+                IID_PPV_ARGS(&device->signature_blit_2d)
+            )
+        };
+
+        const auto cs_blit_2d = compile_shader("cs_5_1", "BlitImage2D", blit_2d_cs);
+
+        const D3D12_COMPUTE_PIPELINE_STATE_DESC desc {
+            device->signature_blit_2d.Get(),
+            D3D12_SHADER_BYTECODE {
+                cs_blit_2d->GetBufferPointer(),
+                cs_blit_2d->GetBufferSize(),
+            },
+            0,
+            D3D12_CACHED_PIPELINE_STATE { },
+            D3D12_PIPELINE_STATE_FLAG_NONE,
+        };
+
+        {
+            const auto hr {
+                (*device)->CreateComputePipelineState(&desc, IID_PPV_ARGS(&device->pso_blit_2d))
             };
 
             // TODO: error
@@ -3234,7 +3363,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(
     }
     if (image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) {
         image_view->srv = device->create_shader_resource_view(
-            image->resource.Get(),
+            image,
             info.viewType,
             format,
             info.components,
@@ -5565,17 +5694,123 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyImage(
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
-    VkCommandBuffer                             commandBuffer,
-    VkImage                                     srcImage,
+    VkCommandBuffer                             _commandBuffer,
+    VkImage                                     _srcImage,
     VkImageLayout                               srcImageLayout,
-    VkImage                                     dstImage,
+    VkImage                                     _dstImage,
     VkImageLayout                               dstImageLayout,
     uint32_t                                    regionCount,
     const VkImageBlit*                          pRegions,
     VkFilter                                    filter
 ) {
     TRACE("vkCmdBlitImage");
-    WARN("vkCmdBlitImage unimplemented");
+    auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
+    auto src_image { reinterpret_cast<image_t *>(_srcImage) };
+    auto dst_image { reinterpret_cast<image_t *>(_dstImage) };
+    auto regions { span<const VkImageBlit>(pRegions, regionCount) };
+
+    // TODO: filter
+
+    command_buffer->active_slot = std::nullopt;
+
+    ComPtr<ID3D12DescriptorHeap> temp_heap { nullptr };
+    const UINT handle_size {
+        command_buffer->device()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
+    };
+    {
+        const D3D12_DESCRIPTOR_HEAP_DESC desc {
+            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+            static_cast<UINT>(2 * regionCount),
+            D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+            0u
+        };
+        auto const hr { command_buffer->device()->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&temp_heap)) };
+    }
+
+    command_buffer->temp_heaps.push_back(temp_heap);
+
+    const auto start_cpu = temp_heap->GetCPUDescriptorHandleForHeapStart();
+    const auto start_gpu = temp_heap->GetGPUDescriptorHandleForHeapStart();
+
+    const D3D12_CPU_DESCRIPTOR_HANDLE srv_start { start_cpu.ptr };
+    const D3D12_CPU_DESCRIPTOR_HANDLE uav_start { start_cpu.ptr + handle_size };
+
+    (*command_buffer)->SetPipelineState(command_buffer->_device->pso_blit_2d.Get());
+    (*command_buffer)->SetComputeRootSignature(command_buffer->_device->signature_blit_2d.Get());
+    std::array<ID3D12DescriptorHeap *const, 1> heaps { temp_heap.Get() };
+    (*command_buffer)->SetDescriptorHeaps(1, &heaps[0]);
+
+    for (auto i : range(regionCount)) {
+        auto const& region { regions[i] };
+
+        const D3D12_CPU_DESCRIPTOR_HANDLE srv { srv_start.ptr + 2 * i * handle_size };
+        const D3D12_CPU_DESCRIPTOR_HANDLE uav { uav_start.ptr + 2 * i * handle_size };
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc { src_image->resource_desc.Format };
+        srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+        srv_desc.Texture2DArray = D3D12_TEX2D_ARRAY_SRV {
+            region.srcSubresource.mipLevel,
+            1,
+            region.srcSubresource.baseArrayLayer,
+            region.srcSubresource.layerCount,
+            0,
+            0.0,
+        };
+        srv_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+            D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+            D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+            D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+            D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_3
+        );
+
+        command_buffer->device()->CreateShaderResourceView(
+            src_image->resource.Get(),
+            &srv_desc,
+            srv
+        );
+
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc { dst_image->resource_desc.Format };
+        uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+        uav_desc.Texture2DArray = D3D12_TEX2D_ARRAY_UAV {
+            region.dstSubresource.mipLevel,
+            region.dstSubresource.baseArrayLayer,
+            region.srcSubresource.layerCount,
+            0,
+        };
+
+        command_buffer->device()->CreateUnorderedAccessView(
+            dst_image->resource.Get(),
+            nullptr, // counter
+            &uav_desc,
+            uav
+        );
+
+
+        (*command_buffer)->SetComputeRootDescriptorTable(0, D3D12_GPU_DESCRIPTOR_HANDLE { start_gpu.ptr + 2 * i * handle_size });
+
+        std::array<uint32_t, 12> constant_data {
+            region.srcOffsets[0].x, region.srcOffsets[0].y, region.srcOffsets[0].z,
+            region.srcOffsets[1].x - region.srcOffsets[0].x,
+            region.srcOffsets[1].y - region.srcOffsets[0].y,
+            region.srcOffsets[1].z - region.srcOffsets[0].z,
+            region.dstOffsets[0].x, region.dstOffsets[0].y, region.dstOffsets[0].z,
+            region.dstOffsets[1].x - region.dstOffsets[0].x,
+            region.dstOffsets[1].y - region.dstOffsets[0].y,
+            region.dstOffsets[1].z - region.dstOffsets[0].z,
+        };
+        (*command_buffer)->SetComputeRoot32BitConstants(
+            1,
+            static_cast<UINT>(constant_data.size()),
+            constant_data.data(),
+            0
+        );
+
+        (*command_buffer)->Dispatch(
+            region.dstOffsets[1].x - region.dstOffsets[0].x,
+            region.dstOffsets[1].y - region.dstOffsets[0].y,
+            region.dstOffsets[1].z - region.dstOffsets[0].z
+        );
+    }
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
@@ -5946,6 +6181,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
     if (!num_cs_regions) {
         return;
     }
+
+    command_buffer->active_slot = std::nullopt;
 
     // Slow path starts here ->
     ComPtr<ID3D12DescriptorHeap> temp_heap { nullptr };

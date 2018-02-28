@@ -9,6 +9,31 @@
 
 #include <array>
 
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/msvc_sink.h>
+
+static auto init_logging() {
+    static auto initialized { false };
+    if (initialized) {
+        return;
+    }
+
+    initialized = true;
+    // spdlog::basic_logger_mt("rostkatze", "test.log");
+    spdlog::create<spdlog::sinks::msvc_sink_mt>("rostkatze");
+    spdlog::set_level(spdlog::level::debug);
+}
+
+static auto log() {
+    return spdlog::get("rostkatze");
+}
+
+#define TRACE(...) log()->trace(__VA_ARGS__)
+#define DEBUG(...) log()->debug(__VA_ARGS__)
+#define INFO(...)  log()->info(__VA_ARGS__)
+#define WARN(...)  log()->warn(__VA_ARGS__)
+#define ERR(...)   log()->error(__VA_ARGS__)
+
 struct format_block_t {
     uint8_t width;
     uint8_t height;
@@ -65,7 +90,6 @@ extern std::array<VkFormatProperties, VK_FORMAT_RANGE_SIZE> formats_property;
     VK_FNC(vkGetBufferMemoryRequirements) \
     VK_FNC(vkGetImageMemoryRequirements) \
     VK_FNC(vkGetImageSparseMemoryRequirements) \
-    VK_FNC(vkGetPhysicalDeviceSparseImageFormatProperties) \
     VK_FNC(vkQueueBindSparse) \
     VK_FNC(vkCreateFence) \
     VK_FNC(vkDestroyFence) \
