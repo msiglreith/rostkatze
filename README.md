@@ -27,6 +27,8 @@ Good luck!
 
 ## "Working" samples (SaschaWillems)
 
+- glTF-PBR
+
 - triangle
 - pipelines
 - texture
