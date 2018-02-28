@@ -224,10 +224,20 @@ struct render_pass_t;
 struct framebuffer_t;
 struct image_view_t;
 
+struct physical_device_properties_t {
+    uint32_t api_version;
+    uint32_t driver_version;
+    uint32_t vendor_id;
+    uint32_t device_id;
+    VkPhysicalDeviceType device_type;
+    std::array<char, VK_MAX_PHYSICAL_DEVICE_NAME_SIZE> device_name;
+};
+
 struct physical_device_t {
     std::mutex is_open;
     ComPtr<IDXGIAdapter4> adapter;
 
+    physical_device_properties_t properties;
     VkPhysicalDeviceMemoryProperties memory_properties;
     span<const heap_properties_t> heap_properties;
 
@@ -255,6 +265,7 @@ public:
 
         struct adapter_info_t {
             ComPtr<IDXGIAdapter4> adapter;
+            physical_device_properties_t properties;
             VkPhysicalDeviceMemoryProperties memory_properties;
             span<const heap_properties_t> heap_properties;
             VkPhysicalDeviceLimits limits;
@@ -276,6 +287,28 @@ public:
                 ERR("Couldn't convert adapter to `IDXGIAdapter4`!");
                 continue;
             }
+
+            DXGI_ADAPTER_DESC3 adapter_desc;
+            adapter->GetDesc3(&adapter_desc);
+
+            physical_device_properties_t properties {
+                VK_MAKE_VERSION(2, 0, 68), // TODO: 2.0 for debugging?
+                0,
+                adapter_desc.VendorId,
+                adapter_desc.DeviceId,
+                VK_PHYSICAL_DEVICE_TYPE_OTHER, // TODO
+            };
+            static_assert(VK_MAX_PHYSICAL_DEVICE_NAME_SIZE >= sizeof(WCHAR) * 128);
+            WideCharToMultiByte(
+                CP_UTF8,
+                WC_NO_BEST_FIT_CHARS,
+                adapter_desc.Description,
+                128,
+                properties.device_name.data(),
+                VK_MAX_PHYSICAL_DEVICE_NAME_SIZE,
+                nullptr,
+                nullptr
+            );
 
             // temporary device
             ComPtr<ID3D12Device3> device;
@@ -404,7 +437,15 @@ public:
             // TODO: missing fields
             limits.maxComputeSharedMemorySize = D3D12_CS_THREAD_LOCAL_TEMP_REGISTER_POOL;
 
-            adapters.emplace_back(adapter_info_t { adapter, memory_properties, heap_properties, limits });
+            adapters.emplace_back(
+                adapter_info_t {
+                    adapter,
+                    properties,
+                    memory_properties,
+                    heap_properties,
+                    limits,
+                }
+            );
         }
 
         const auto num_adapters { adapters.size() };
@@ -412,6 +453,7 @@ public:
         for (auto i : range(num_adapters)) {
             auto& adapter { this->_adapters[i] };
             adapter.adapter = adapters[i].adapter;
+            adapter.properties = adapters[i].properties;
             adapter.memory_properties = adapters[i].memory_properties;
             adapter.heap_properties = adapters[i].heap_properties;
             adapter.limits = adapters[i].limits;
@@ -2065,16 +2107,17 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties(
     auto physical_device { reinterpret_cast<physical_device_t *>(_physicalDevice) };
 
     *pProperties = VkPhysicalDeviceProperties {
-        VK_MAKE_VERSION(2, 0, 68), // TODO: temporary for debugging!
-        0, // driver version // TODO
-        0, // vendor id // TODO
-        0, // device id // TODO
-        VK_PHYSICAL_DEVICE_TYPE_OTHER, // TODO
-        "", // device name // TODO
+        physical_device->properties.api_version,
+        physical_device->properties.driver_version,
+        physical_device->properties.vendor_id,
+        physical_device->properties.device_id,
+        physical_device->properties.device_type,
+        "",
         { }, // TODO pipeline cache UUID
         physical_device->limits,
         { }, // TODO: sparse properties
     };
+    std::memcpy(pProperties->deviceName, physical_device->properties.device_name.data(), VK_MAX_PHYSICAL_DEVICE_NAME_SIZE);
 }
 
 VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties(
