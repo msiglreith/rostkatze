@@ -436,6 +436,11 @@ public:
             limits.maxPushConstantsSize = 4 * D3D12_MAX_ROOT_COST;
             // TODO: missing fields
             limits.maxComputeSharedMemorySize = D3D12_CS_THREAD_LOCAL_TEMP_REGISTER_POOL;
+            // TODO: missing fields
+            limits.framebufferColorSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT; // TODO
+            limits.framebufferDepthSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT; // TODO
+            limits.framebufferStencilSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT; // TODO
+            limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT; // TODO
 
             adapters.emplace_back(
                 adapter_info_t {
@@ -740,19 +745,27 @@ public:
     }
 
     auto create_render_target_view(
-        ID3D12Resource* resource,
+        image_t* image,
         VkImageViewType type,
         DXGI_FORMAT format,
         VkImageSubresourceRange const& range
     ) -> std::tuple<D3D12_CPU_DESCRIPTOR_HANDLE, heap_index_t> {
-        // TODO
-        assert(range.layerCount != VK_REMAINING_ARRAY_LAYERS);
+        auto resource { image->resource.Get() };
+
+        const auto layer_count {
+            range.layerCount == VK_REMAINING_ARRAY_LAYERS ?
+                image->resource_desc.DepthOrArraySize - range.baseArrayLayer :
+                range.layerCount
+        };
         // TODO: multisampling
 
         auto handle { this->descriptors_cpu_rtv.alloc() };
 
         D3D12_RENDER_TARGET_VIEW_DESC desc { format };
-        if (type == VK_IMAGE_VIEW_TYPE_1D && range.baseArrayLayer == 0) {
+        if (type == VK_IMAGE_TYPE_2D && image->resource_desc.SampleDesc.Count != VK_SAMPLE_COUNT_1_BIT) {
+            desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DMS;
+            desc.Texture2DMS = D3D12_TEX2DMS_RTV { };
+        } else if (type == VK_IMAGE_VIEW_TYPE_1D && range.baseArrayLayer == 0) {
             desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE1D;
             desc.Texture1D = D3D12_TEX1D_RTV { range.baseMipLevel };
         } else if (type == VK_IMAGE_VIEW_TYPE_1D || type == VK_IMAGE_VIEW_TYPE_1D_ARRAY) {
@@ -760,7 +773,7 @@ public:
             desc.Texture1DArray = D3D12_TEX1D_ARRAY_RTV {
                 range.baseMipLevel,
                 range.baseArrayLayer,
-                range.layerCount
+                layer_count
             };
         } else if (type == VK_IMAGE_VIEW_TYPE_2D && range.baseArrayLayer == 0) {
             desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
@@ -772,7 +785,7 @@ public:
             desc.Texture2DArray = D3D12_TEX2D_ARRAY_RTV {
                 range.baseMipLevel,
                 range.baseArrayLayer,
-                range.layerCount,
+                layer_count,
                 0
             };
         } else if (type == VK_IMAGE_VIEW_TYPE_3D) {
@@ -785,19 +798,27 @@ public:
     }
 
     auto create_depth_stencil_view(
-        ID3D12Resource* resource,
+        image_t* image,
         VkImageViewType type,
         DXGI_FORMAT format,
         VkImageSubresourceRange const& range
     ) -> std::tuple<D3D12_CPU_DESCRIPTOR_HANDLE, heap_index_t> {
-        // TODO
-        assert(range.layerCount != VK_REMAINING_ARRAY_LAYERS);
+        auto resource { image->resource.Get() };
+
+        const auto layer_count {
+            range.layerCount == VK_REMAINING_ARRAY_LAYERS ?
+                image->resource_desc.DepthOrArraySize - range.baseArrayLayer :
+                range.layerCount
+        };
         // TODO: multisampling
 
         auto handle { this->descriptors_cpu_dsv.alloc() };
 
         D3D12_DEPTH_STENCIL_VIEW_DESC desc { format };
-        if (type == VK_IMAGE_VIEW_TYPE_1D && range.baseArrayLayer == 0) {
+        if (type == VK_IMAGE_TYPE_2D && image->resource_desc.SampleDesc.Count != VK_SAMPLE_COUNT_1_BIT) {
+            desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DMS;
+            desc.Texture2DMS = D3D12_TEX2DMS_DSV { };
+        } else if (type == VK_IMAGE_VIEW_TYPE_1D && range.baseArrayLayer == 0) {
             desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE1D;
             desc.Texture1D = D3D12_TEX1D_DSV { range.baseMipLevel };
         } else if (type == VK_IMAGE_VIEW_TYPE_1D || type == VK_IMAGE_VIEW_TYPE_1D_ARRAY) {
@@ -1619,6 +1640,26 @@ public:
                     );
                 }
             }
+        }
+
+        for (auto i : range(subpass.resolve_attachments.size())) {
+            auto const& color_attachment { subpass.color_attachments[i] };
+            auto const& resolve_attachment { subpass.resolve_attachments[i] };
+
+            if (resolve_attachment.attachment == VK_ATTACHMENT_UNUSED) {
+                continue;
+            }
+
+            auto color_view { framebuffer->attachments[color_attachment.attachment] };
+            auto resolve_view { framebuffer->attachments[resolve_attachment.attachment] };
+
+            this->command_list->ResolveSubresource(
+                resolve_view->image,
+                0, // TODO: D3D12CalcSubresource(resolve_view->)
+                color_view->image,
+                0, // TODO
+                formats[render_pass->attachments[color_attachment.attachment].desc.format]
+            );
         }
     }
 
@@ -2720,7 +2761,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateMemory(
             0,
             0
         },
-        0, // TODO: alignment of MSAA
+        D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT,
         D3D12_HEAP_FLAG_ALLOW_ALL_BUFFERS_AND_TEXTURES // TODO: resource tier 1
     };
 
@@ -3330,7 +3371,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(
         ),
         static_cast<UINT16>(info.mipLevels),
         format,
-        { 1, 0 }, // TODO
+        { info.samples, 0 }, // TODO: quality
         D3D12_TEXTURE_LAYOUT_UNKNOWN, // TODO
         flags
     };
@@ -3390,7 +3431,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(
     auto image_view { new image_view_t { image->resource.Get() }};
     if (image->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) {
         image_view->rtv = device->create_render_target_view(
-            image->resource.Get(),
+            image,
             info.viewType,
             format,
             info.subresourceRange
@@ -3398,7 +3439,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(
     }
     if (image->usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) {
         image_view->dsv = device->create_depth_stencil_view(
-            image->resource.Get(),
+            image,
             info.viewType,
             format,
             info.subresourceRange
@@ -3752,7 +3793,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
 
         if (!rasterization_state.rasterizerDiscardEnable && uses_color_attachments) {
             auto const& color_blend_state { *info.pColorBlendState };
-            auto const& multisample_state { *info.pMultisampleState };
 
             if (static_blend_factors) {
                 pipeline->static_blend_factors = blend_factors_t {
@@ -3818,7 +3858,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
                 return D3D12_BLEND_OP_ADD;
             };
 
-            blend_desc.AlphaToCoverageEnable = multisample_state.alphaToCoverageEnable;
             // TODO: we could enable this when the feature is enabled
             blend_desc.IndependentBlendEnable = TRUE; // Vulkan always enables this
             if (color_blend_state.attachmentCount) {
@@ -3892,7 +3931,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
             depth_bias ? rasterization_state.depthBiasClamp : 0.0f,
             depth_bias ? rasterization_state.depthBiasSlopeFactor : 0.0f,
             !rasterization_state.depthClampEnable,
-            FALSE, // TODO: multisampling
+            FALSE,
             FALSE, // TODO: AA lines
             0, // TODO: forced sample count
             D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF
@@ -3901,6 +3940,22 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         pipeline->static_state.depth_bias = rasterizer_desc.DepthBias;
         pipeline->static_state.depth_bias_clamp = rasterizer_desc.DepthBiasClamp;
         pipeline->static_state.depth_bias_slope = rasterizer_desc.SlopeScaledDepthBias;
+
+        // multi sampling
+        UINT sample_mask { ~0u };
+        DXGI_SAMPLE_DESC sample_desc { 1, 0 };
+        if (!rasterization_state.rasterizerDiscardEnable) {
+            auto const& multisampling_state { *info.pMultisampleState };
+
+            rasterizer_desc.MultisampleEnable = multisampling_state.rasterizationSamples != VK_SAMPLE_COUNT_1_BIT;
+            sample_desc.Count = multisampling_state.rasterizationSamples;
+            if (multisampling_state.pSampleMask) {
+                sample_mask = *multisampling_state.pSampleMask;
+            }
+
+            blend_desc.AlphaToCoverageEnable = multisampling_state.alphaToCoverageEnable;
+            // TODO: alpha to one
+        }
 
         // depth stencil desc
         const auto depth_attachment { subpass.depth_attachment.attachment };
@@ -3989,7 +4044,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
                 0u,
             },
             blend_desc,
-            ~0u, // TODO: sample mask
+            sample_mask,
             rasterizer_desc,
             depth_stencil_desc,
             D3D12_INPUT_LAYOUT_DESC {
@@ -4001,7 +4056,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
             num_render_targets,
             { }, // Fill in RTV formats below
             dsv_format,
-            DXGI_SAMPLE_DESC { 1, 0 }, // TODO
+            sample_desc,
             0, // NodeMask
             D3D12_CACHED_PIPELINE_STATE { }, // TODO
             D3D12_PIPELINE_STATE_FLAG_NONE, // TODO
@@ -4960,7 +5015,19 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass(
         } else {
             pass.depth_attachment = VkAttachmentReference { VK_ATTACHMENT_UNUSED };
         }
-        // TODO: preserve, resolve
+        // TODO: preserve
+
+        if (subpass.pResolveAttachments) {
+            for (auto i : range(subpass.colorAttachmentCount)) {
+                const auto attachment { subpass.pResolveAttachments[i] };
+                if (attachment.attachment != VK_ATTACHMENT_UNUSED) {
+                    if (!render_pass->attachments[attachment.attachment].first_use) {
+                        render_pass->attachments[attachment.attachment].first_use = sp;
+                    }
+                }
+                pass.resolve_attachments.emplace_back(attachment);
+            }
+        }
 
         render_pass->subpasses.emplace_back(pass);
     }
