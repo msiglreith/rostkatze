@@ -1880,6 +1880,10 @@ auto translate_spirv (
             auto set { compiler.get_decoration(image.id, spv::Decoration::DecorationDescriptorSet) };
             compiler.set_decoration(image.id, spv::Decoration::DecorationDescriptorSet, DESCRIPTOR_TABLE_INITIAL_SPACE + 2 * set); // Sampler offset done in spirv-cross
         }
+        for (auto const& sampler : shader_resources.separate_samplers) {
+            auto set { compiler.get_decoration(sampler.id, spv::Decoration::DecorationDescriptorSet) };
+            compiler.set_decoration(sampler.id, spv::Decoration::DecorationDescriptorSet, DESCRIPTOR_TABLE_INITIAL_SPACE + 2 * set + 1);
+        }
 
         // TODO: more shader resource supports!
 
@@ -4740,6 +4744,30 @@ VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(
 
             switch (write.descriptorType) {
                 case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
+                    auto image_views { span<const VkDescriptorImageInfo>(write.pImageInfo, write.descriptorCount) };
+                    for (auto i : range(write.descriptorCount)) {
+                        auto const& view { image_views[i] };
+                        auto image_view { reinterpret_cast<image_view_t *>(view.imageView) };
+
+                        if (array_elem >= binding->second.num_descriptors) {
+                            ++binding; // go to next binding slot
+                        }
+
+                        src_range_starts.push_back(std::get<0>(*image_view->srv));
+                        src_range_sizes.push_back(1);
+
+                        const auto dst_handle {
+                            D3D12_CPU_DESCRIPTOR_HANDLE {
+                                binding->second.start_cbv_srv_uav.ptr + array_elem * handle_size_cbv_srv_uav
+                            }
+                        };
+                        dst_range_starts.push_back(dst_handle);
+                        dst_range_sizes.push_back(1); // TODO: could batch a bit but minor.., else remove these ranges
+
+                        array_elem += 1;
+                    }
+                } break;
+                case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: {
                     auto image_views { span<const VkDescriptorImageInfo>(write.pImageInfo, write.descriptorCount) };
                     for (auto i : range(write.descriptorCount)) {
                         auto const& view { image_views[i] };
