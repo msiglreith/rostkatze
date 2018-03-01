@@ -365,7 +365,7 @@ public:
                     0
                 };
                 // Readback
-                memory_properties.memoryTypes[1] = {
+                memory_properties.memoryTypes[2] = {
                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
                     0
@@ -384,7 +384,7 @@ public:
                     0
                 };
                 // Readback
-                memory_properties.memoryTypes[1] = {
+                memory_properties.memoryTypes[2] = {
                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
                     0
                 };
@@ -402,7 +402,7 @@ public:
                     1
                 };
                 // Readback
-                memory_properties.memoryTypes[1] = {
+                memory_properties.memoryTypes[2] = {
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
                     1
                 };
@@ -2136,6 +2136,20 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceImageFormatProperties(
     VkImageFormatProperties*                    pImageFormatProperties
 ) {
     WARN("vkGetPhysicalDeviceImageFormatProperties unimplemented");
+
+    // TODO
+    *pImageFormatProperties = VkImageFormatProperties {
+        VkExtent3D {
+            D3D12_REQ_TEXTURE1D_U_DIMENSION,
+            D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION,
+            D3D12_REQ_TEXTURE3D_U_V_OR_W_DIMENSION,
+        },
+        1,
+        1,
+        VK_SAMPLE_COUNT_1_BIT,
+        1,
+    };
+
     return VK_SUCCESS;
 }
 
