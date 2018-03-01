@@ -28,12 +28,12 @@ Good luck!
 ## "Working" samples (SaschaWillems)
 
 - glTF-PBR
-
 - triangle
 - pipelines
 - texture
 - texturecubmap
 - texturearray
+- texturemipmapgen
 - mesh
 - specialization constants
 - offscreen
@@ -60,6 +60,7 @@ Good luck!
 - distancefieldrendering
 - vulkanscene
 - imgui
+- multisampling
 
 ## Partially working
 
@@ -72,8 +73,6 @@ Good luck!
 - multithreading (seconday buffers not implemented)
 - dynamic uniform buffers (not implemented)
 - occlusion queries (not implemented)
-- mipmap gen (not implemented)
-- multisampling (not implemented)
 - deferred shadows (geometry shader support)
 - n-body (bug in samples/UB/portability)
 - raytracing (reading structs from byteaddressbuffer not supported)

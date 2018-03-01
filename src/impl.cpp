@@ -134,21 +134,33 @@ struct Region {
     uint dst_extent_x;
     uint dst_extent_y;
     uint dst_extent_z;
+
+    uint src_size_x;
+    uint src_size_y;
+    uint src_size_z;
 };
 ConstantBuffer<Region> region : register(b0);
 
 [numthreads( 1, 1, 1 )]
 void BlitImage2D(uint3 dispatch_thread_id : SV_DispatchThreadID) {
-    float3 delta = float3(
-        float(dispatch_thread_id.x) / float(region.dst_extent_x),
-        float(dispatch_thread_id.y) / float(region.dst_extent_y),
-        float(dispatch_thread_id.z) / float(region.dst_extent_z)
-    );
-
     uint3 dst_offset = uint3(region.dst_offset_x, region.dst_offset_y, region.dst_offset_z);
     int3 src_offset = int3(region.src_offset_x, region.src_offset_y, region.src_offset_z);
 
-    dst[dispatch_thread_id] = src.SampleLevel(src_sampler, delta, src_offset);
+    float u_offset = float(dispatch_thread_id.x) + 0.5;
+    float v_offset = float(dispatch_thread_id.y) + 0.5;
+    float w_offset = float(dispatch_thread_id.z) + 0.5;
+
+    float scale_u = float(region.src_extent_x) / float(region.dst_extent_x);
+    float scale_v = float(region.src_extent_y) / float(region.dst_extent_y);
+    float scale_w = float(region.src_extent_z) / float(region.dst_extent_z);
+
+    float3 uvw = float3(
+        u_offset * scale_u / float(region.src_size_x),
+        v_offset * scale_v / float(region.src_size_y),
+        w_offset * scale_w / float(region.src_size_z)
+    );
+
+    dst[dispatch_thread_id + dst_offset] = src.SampleLevel(src_sampler, uvw, src_offset);
 }
 )";
 
@@ -436,6 +448,8 @@ public:
             limits.maxPushConstantsSize = 4 * D3D12_MAX_ROOT_COST;
             // TODO: missing fields
             limits.maxComputeSharedMemorySize = D3D12_CS_THREAD_LOCAL_TEMP_REGISTER_POOL;
+            // TODO: missing fields
+            limits.maxSamplerAnisotropy = 16;
             // TODO: missing fields
             limits.framebufferColorSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT; // TODO
             limits.framebufferDepthSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT; // TODO
@@ -2473,7 +2487,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(
             2,
             range
         );
-        CD3DX12_ROOT_PARAMETER::InitAsConstants(parameters[1], 12, 0);
+        CD3DX12_ROOT_PARAMETER::InitAsConstants(parameters[1], 15, 0);
 
         const D3D12_STATIC_SAMPLER_DESC static_sampler {
             D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT, // TODO: nearest filter?
@@ -4446,13 +4460,20 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSampler(
         } break;
     }
 
-    D3D12_SAMPLER_DESC desc {
+    auto filter {
         D3D12_ENCODE_BASIC_FILTER(
             base_filter(info.minFilter),
             base_filter(info.magFilter),
             mip_filter(info.mipmapMode),
             reduction
-        ),
+        )
+    };
+    if (info.anisotropyEnable) {
+        filter = static_cast<D3D12_FILTER>(filter | D3D12_ANISOTROPIC_FILTERING_BIT);
+    }
+
+    D3D12_SAMPLER_DESC desc {
+        filter,
         address_mode(info.addressModeU),
         address_mode(info.addressModeV),
         address_mode(info.addressModeW),
@@ -5861,6 +5882,14 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
     auto dst_image { reinterpret_cast<image_t *>(_dstImage) };
     auto regions { span<const VkImageBlit>(pRegions, regionCount) };
 
+    const auto src_img_width { src_image->resource_desc.Width };
+    const auto src_img_height { src_image->resource_desc.Height };
+    const auto src_img_depth {
+        src_image->resource_desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+            1 :
+            src_image->resource_desc.DepthOrArraySize
+    };
+
     // TODO: filter
 
     command_buffer->active_slot = std::nullopt;
@@ -5938,9 +5967,17 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
         );
 
 
-        (*command_buffer)->SetComputeRootDescriptorTable(0, D3D12_GPU_DESCRIPTOR_HANDLE { start_gpu.ptr + 2 * i * handle_size });
+        (*command_buffer)->SetComputeRootDescriptorTable(
+            0,
+            D3D12_GPU_DESCRIPTOR_HANDLE { start_gpu.ptr + 2 * i * handle_size }
+        );
 
-        std::array<uint32_t, 12> constant_data {
+        const auto level { region.srcSubresource.mipLevel };
+        const auto width { std::max(static_cast<UINT>(src_img_width >> level), static_cast<UINT>(1u)) };
+        const auto height { std::max(static_cast<UINT>(src_img_height >> level), static_cast<UINT>(1u)) };
+        const auto depth { std::max(static_cast<UINT>(src_img_depth >> level), static_cast<UINT>(1u)) };
+
+        std::array<uint32_t, 15> constant_data {
             region.srcOffsets[0].x, region.srcOffsets[0].y, region.srcOffsets[0].z,
             region.srcOffsets[1].x - region.srcOffsets[0].x,
             region.srcOffsets[1].y - region.srcOffsets[0].y,
@@ -5949,6 +5986,9 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
             region.dstOffsets[1].x - region.dstOffsets[0].x,
             region.dstOffsets[1].y - region.dstOffsets[0].y,
             region.dstOffsets[1].z - region.dstOffsets[0].z,
+            width,
+            height,
+            depth,
         };
         (*command_buffer)->SetComputeRoot32BitConstants(
             1,
@@ -5962,6 +6002,12 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
             region.dstOffsets[1].y - region.dstOffsets[0].y,
             region.dstOffsets[1].z - region.dstOffsets[0].z
         );
+
+        std::array<D3D12_RESOURCE_BARRIER, 2> uav_barriers {
+            CD3DX12_RESOURCE_BARRIER::UAV(src_image->resource.Get()),
+            CD3DX12_RESOURCE_BARRIER::UAV(dst_image->resource.Get())
+        };
+        (*command_buffer)->ResourceBarrier(uav_barriers.size(), uav_barriers.data());
     }
 }
 

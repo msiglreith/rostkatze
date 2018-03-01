@@ -426,7 +426,11 @@ std::array<VkFormatProperties, VK_FORMAT_RANGE_SIZE> formats_property {{
     { }, // B8G8R8_UINT
     { }, // B8G8R8_SINT
     { }, // B8G8R8_SRGB
-    { 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, 0 }, // R8G8B8A8_UNORM
+    { // R8G8B8A8_UNORM // TODO: incomplete
+        0,
+        VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT,
+        0,
+    },
     { }, // R8G8B8A8_SNORM
     { }, // R8G8B8A8_USCALED
     { }, // R8G8B8A8_SSCALED
