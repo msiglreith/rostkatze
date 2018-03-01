@@ -6372,15 +6372,97 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer(
-    VkCommandBuffer                             commandBuffer,
-    VkImage                                     srcImage,
+    VkCommandBuffer                             _commandBuffer,
+    VkImage                                     _srcImage,
     VkImageLayout                               srcImageLayout,
-    VkBuffer                                    dstBuffer,
+    VkBuffer                                    _dstBuffer,
     uint32_t                                    regionCount,
     const VkBufferImageCopy*                    pRegions
 ) {
     TRACE("vkCmdCopyImageToBuffer");
-    WARN("vkCmdCopyImageToBuffer unimplemented");
+
+    auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
+    auto src_image { reinterpret_cast<image_t *>(_srcImage) };
+    auto dst_buffer { reinterpret_cast<buffer_t *>(_dstBuffer) };
+    auto regions { span<const VkBufferImageCopy>(pRegions, regionCount) };
+
+    const auto img_width { src_image->resource_desc.Width };
+    const auto img_height { src_image->resource_desc.Height };
+    const auto img_depth {
+        src_image->resource_desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+            1 :
+            src_image->resource_desc.DepthOrArraySize
+    };
+
+    for (auto const& region : regions) {
+        const auto level { region.imageSubresource.mipLevel };
+        const auto width { std::max(static_cast<UINT>(img_width >> level), static_cast<UINT>(1u)) };
+        const auto height { std::max(static_cast<UINT>(img_height >> level), static_cast<UINT>(1u)) };
+        const auto depth { std::max(static_cast<UINT>(img_depth >> level), static_cast<UINT>(1u)) };
+
+        const auto base_layer { region.imageSubresource.baseArrayLayer };
+        const auto num_layers { region.imageSubresource.layerCount };
+
+        for (auto layer : range(base_layer, base_layer+num_layers)) {
+            const auto buffer_width {
+                region.bufferRowLength ? region.bufferRowLength : region.imageExtent.width
+            };
+            const auto buffer_height {
+                region.bufferImageHeight ? region.bufferImageHeight : region.imageExtent.height
+            };
+
+            const auto byte_per_texel { src_image->block_data.bits / 8 };
+            const auto row_pitch {
+                (up_align(buffer_width, src_image->block_data.width) / src_image->block_data.width) * byte_per_texel
+            };
+
+            // TODO: alignment?
+            const D3D12_TEXTURE_COPY_LOCATION dst_desc {
+                dst_buffer->resource.Get(),
+                D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+                D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
+                    region.bufferOffset,
+                    D3D12_SUBRESOURCE_FOOTPRINT {
+                        src_image->resource_desc.Format,
+                        width,
+                        height,
+                        depth,
+                        row_pitch,
+                    },
+                },
+            };
+
+            const D3D12_TEXTURE_COPY_LOCATION src_desc {
+                src_image->resource.Get(),
+                D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                D3D12CalcSubresource(
+                    level,
+                    layer,
+                    0,
+                    src_image->resource_desc.MipLevels,
+                    src_image->resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+                        1 :
+                        src_image->resource_desc.DepthOrArraySize
+                ),
+            };
+
+            const D3D12_BOX box {
+                0, 0, 0,
+                up_align(region.imageExtent.width, src_image->block_data.width),
+                up_align(region.imageExtent.height, src_image->block_data.height),
+                region.imageExtent.depth,
+            };
+
+            (*command_buffer)->CopyTextureRegion(
+                &dst_desc,
+                region.imageOffset.x,
+                region.imageOffset.y,
+                region.imageOffset.z,
+                &src_desc,
+                &box
+            );
+        }
+    }
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdUpdateBuffer(
