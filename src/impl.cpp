@@ -2087,7 +2087,7 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures(
         true, // depthClamp
         true, // depthBiasClamp
         true, // fillModeNonSolid // TODO: point is still hairy
-        true, // depthBounds // TODO: older dx12 versions
+        false, // depthBounds // TODO: check for support
         false, // wideLines
         false, // largePoints // TODO
         true, // alphaToOne
@@ -4027,7 +4027,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         if (!rasterization_state.rasterizerDiscardEnable && uses_depth_stencil_attachment) {
             auto const& depth_stencil_state { *info.pDepthStencilState };
 
-            if (static_depth_bounds) {
+            if (depth_stencil_state.depthBoundsTestEnable == VK_TRUE && static_depth_bounds) {
                 pipeline->static_depth_bounds = std::make_tuple(
                     depth_stencil_state.minDepthBounds,
                     depth_stencil_state.maxDepthBounds

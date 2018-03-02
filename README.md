@@ -61,11 +61,11 @@ Good luck!
 - vulkanscene
 - imgui
 - multisampling
+- ssao
 
 ## Partially working
 
 - computecloth (bugs)
-- ssao (bugs)
 - pushconstants (push constant array members)
 
 # Almost/Not working
