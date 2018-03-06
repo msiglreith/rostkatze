@@ -70,7 +70,14 @@ extern std::array<VkFormatProperties, VK_FORMAT_RANGE_SIZE> formats_property;
     VK_FNC(vkGetPhysicalDeviceSurfaceSupportKHR) \
     VK_FNC(vkGetPhysicalDeviceSurfaceCapabilitiesKHR) \
     VK_FNC(vkGetPhysicalDeviceSurfaceFormatsKHR) \
-    VK_FNC(vkGetPhysicalDeviceSurfacePresentModesKHR)
+    VK_FNC(vkGetPhysicalDeviceSurfacePresentModesKHR) \
+    VK_FNC(vkGetPhysicalDeviceFeatures2KHR) \
+    VK_FNC(vkGetPhysicalDeviceProperties2KHR) \
+    VK_FNC(vkGetPhysicalDeviceFormatProperties2KHR) \
+    VK_FNC(vkGetPhysicalDeviceImageFormatProperties2KHR) \
+    VK_FNC(vkGetPhysicalDeviceQueueFamilyProperties2KHR) \
+    VK_FNC(vkGetPhysicalDeviceMemoryProperties2KHR) \
+    VK_FNC(vkGetPhysicalDeviceSparseImageFormatProperties2KHR)
 
 #define VK_DEVICE_FNC() \
     VK_FNC(vkDestroyDevice) \

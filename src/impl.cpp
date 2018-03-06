@@ -2586,7 +2586,11 @@ VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionProperties(
         {
             VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
             VK_KHR_WIN32_SURFACE_SPEC_VERSION,
-        }
+        },
+        { // TODO: preliminary, not fully implemented
+            VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+            VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_SPEC_VERSION,
+        },
     }};
 
     auto result { VK_SUCCESS };
@@ -2617,15 +2621,19 @@ VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceExtensionProperties(
     VkExtensionProperties*                      pProperties
 ) {
     TRACE("vkEnumerateInstanceExtensionProperties");
-    const std::array<VkExtensionProperties, 2> extensions {{
+    const std::array<VkExtensionProperties, 3> extensions {{
         {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_KHR_SWAPCHAIN_SPEC_VERSION,
         },
-        {
+        { // TODO: preliminary, not fully implemented
             VK_KHR_MAINTENANCE1_EXTENSION_NAME,
             VK_KHR_MAINTENANCE1_SPEC_VERSION,
-        }
+        },
+        {
+            VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
+            VK_EXT_CONSERVATIVE_RASTERIZATION_SPEC_VERSION,
+        },
     }};
 
     auto result { VK_SUCCESS };
@@ -7149,4 +7157,102 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(
     );
 
     return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures2KHR(
+    VkPhysicalDevice                            _physicalDevice,
+    VkPhysicalDeviceFeatures2KHR*               pFeatures
+) {
+    TRACE("vkGetPhysicalDeviceFeatures2KHR");
+
+    pFeatures->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
+    pFeatures->pNext = nullptr;
+    vkGetPhysicalDeviceFeatures(_physicalDevice, &pFeatures->features);
+}
+
+VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties2KHR(
+    VkPhysicalDevice                            _physicalDevice,
+    VkPhysicalDeviceProperties2KHR*             pProperties
+) {
+    TRACE("vkGetPhysicalDeviceProperties2KHR");
+
+    pProperties->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR;
+    pProperties->pNext = nullptr;
+    vkGetPhysicalDeviceProperties(_physicalDevice, &pProperties->properties);
+}
+
+VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties2KHR(
+    VkPhysicalDevice                            _physicalDevice,
+    VkFormat                                    format,
+    VkFormatProperties2KHR*                     pFormatProperties
+) {
+    TRACE("vkGetPhysicalDeviceFormatProperties2KHR");
+
+    pFormatProperties->sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2_KHR;
+    pFormatProperties->pNext = nullptr;
+    vkGetPhysicalDeviceFormatProperties(_physicalDevice, format, &pFormatProperties->formatProperties);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceImageFormatProperties2KHR(
+    VkPhysicalDevice                            _physicalDevice,
+    const VkPhysicalDeviceImageFormatInfo2KHR*  pImageFormatInfo,
+    VkImageFormatProperties2KHR*                pImageFormatProperties
+) {
+    TRACE("vkGetPhysicalDeviceImageFormatProperties2KHR");
+
+    auto const& info { *pImageFormatInfo };
+
+    pImageFormatProperties->sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2_KHR;
+    pImageFormatProperties->pNext = nullptr;
+    const auto result {
+        vkGetPhysicalDeviceImageFormatProperties(
+            _physicalDevice,
+            info.format,
+            info.type,
+            info.tiling,
+            info.usage,
+            info.flags,
+            &pImageFormatProperties->imageFormatProperties
+        )
+    };
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties2KHR(
+    VkPhysicalDevice                            _physicalDevice,
+    uint32_t*                                   pQueueFamilyPropertyCount,
+    VkQueueFamilyProperties2KHR*                pQueueFamilyProperties
+) {
+    TRACE("vkGetPhysicalDeviceQueueFamilyProperties2KHR");
+
+    pQueueFamilyProperties->sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2_KHR;
+    pQueueFamilyProperties->pNext = nullptr;
+    vkGetPhysicalDeviceQueueFamilyProperties(
+        _physicalDevice,
+        pQueueFamilyPropertyCount,
+        pQueueFamilyProperties ?
+            &pQueueFamilyProperties->queueFamilyProperties :
+            nullptr
+    );
+}
+
+VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceMemoryProperties2KHR(
+    VkPhysicalDevice                            _physicalDevice,
+    VkPhysicalDeviceMemoryProperties2KHR*       pMemoryProperties
+) {
+    TRACE("vkGetPhysicalDeviceMemoryProperties2KHR");
+
+    pMemoryProperties->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2_KHR;
+    pMemoryProperties->pNext = nullptr;
+    vkGetPhysicalDeviceMemoryProperties(_physicalDevice, &pMemoryProperties->memoryProperties);
+}
+
+VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
+    VkPhysicalDevice                            physicalDevice,
+    const VkPhysicalDeviceSparseImageFormatInfo2KHR* pFormatInfo,
+    uint32_t*                                   pPropertyCount,
+    VkSparseImageFormatProperties2KHR*          pProperties
+) {
+    TRACE("vkGetPhysicalDeviceSparseImageFormatProperties2KHR");
+    WARN("vkGetPhysicalDeviceSparseImageFormatProperties2KHR unimplemented");
 }
