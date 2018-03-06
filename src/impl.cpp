@@ -164,6 +164,12 @@ void BlitImage2D(uint3 dispatch_thread_id : SV_DispatchThreadID) {
 }
 )";
 
+// Header part of a vulkan struct
+struct vulkan_struct_t {
+    VkStructureType type;
+    vulkan_struct_t *next;
+};
+
 enum queue_family {
     QUEUE_FAMILY_GENERAL_PRESENT = 0,
     QUEUE_FAMILY_GENERAL,
@@ -3370,7 +3376,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateBuffer(
     if (info.usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) {
         size = up_align(size, 256);
     };
-    if (info.usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT) {
+    if (info.usage & (VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)) {
         size = up_align(size, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
     };
 
@@ -4022,9 +4028,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
 
         auto conservative_rasterization { D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF };
 
-        auto next { static_cast<const VkStructureType *>(rasterization_state.pNext) };
-        while (next) {
-            switch (*next) {
+        auto next { static_cast<const vulkan_struct_t *>(rasterization_state.pNext) };
+        for(; next; next = next->next) {
+            switch (next->type) {
                 case VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT: {
                     auto const& conservative {
                         *reinterpret_cast<const VkPipelineRasterizationConservativeStateCreateInfoEXT *>(next)
@@ -4040,7 +4046,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
                     }
                 } break;
             }
-            next = static_cast<const VkStructureType *>(next++);
         }
 
         D3D12_RASTERIZER_DESC rasterizer_desc {
@@ -7252,9 +7257,9 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties2KHR(
 
     auto physical_device { reinterpret_cast<physical_device_t *>(_physicalDevice) };
 
-    auto next { static_cast<VkStructureType *>(pProperties->pNext) };
-    while (next) {
-        switch (*next) {
+    auto next { static_cast<vulkan_struct_t *>(pProperties->pNext) };
+    for(; next; next = next->next) {
+        switch (next->type) {
             case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT: {
                 if (physical_device->conservative_properties) {
                     const auto& conservative { *physical_device->conservative_properties };
@@ -7272,7 +7277,6 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties2KHR(
                 }
             } break;
         }
-        next = static_cast<VkStructureType *>(next++);
     }
 
     vkGetPhysicalDeviceProperties(_physicalDevice, &pProperties->properties);
