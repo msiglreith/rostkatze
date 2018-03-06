@@ -10,6 +10,7 @@
 
 using namespace stdx;
 
+// TODO: multi-threading
 class free_list {
 public:
     free_list(size_t size) :

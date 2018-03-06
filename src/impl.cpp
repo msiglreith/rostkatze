@@ -1073,7 +1073,7 @@ public:
     descriptors_cpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 128> descriptors_cpu_sampler;
 
     // GPU descriptor heaps
-    descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 100'000> descriptors_gpu_cbv_srv_uav;
+    descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1'000'000> descriptors_gpu_cbv_srv_uav;
     descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 2048> descriptors_gpu_sampler;
 
     // Indirect execution signatures
@@ -2578,7 +2578,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionProperties(
     uint32_t*                                   pPropertyCount,
     VkExtensionProperties*                      pProperties
 ) {
-    const std::array<VkExtensionProperties, 2> extensions {{
+    const std::array<VkExtensionProperties, 3> extensions {{
         {
             VK_KHR_SURFACE_EXTENSION_NAME,
             VK_KHR_SURFACE_SPEC_VERSION,
@@ -2617,10 +2617,14 @@ VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceExtensionProperties(
     VkExtensionProperties*                      pProperties
 ) {
     TRACE("vkEnumerateInstanceExtensionProperties");
-    const std::array<VkExtensionProperties, 1> extensions {{
+    const std::array<VkExtensionProperties, 2> extensions {{
         {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_KHR_SWAPCHAIN_SPEC_VERSION,
+        },
+        {
+            VK_KHR_MAINTENANCE1_EXTENSION_NAME,
+            VK_KHR_MAINTENANCE1_SPEC_VERSION,
         }
     }};
 
