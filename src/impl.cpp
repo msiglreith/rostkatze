@@ -4020,6 +4020,29 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
 
         const auto depth_bias { rasterization_state.depthBiasEnable };
 
+        auto conservative_rasterization { D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF };
+
+        auto next { static_cast<const VkStructureType *>(rasterization_state.pNext) };
+        while (next) {
+            switch (*next) {
+                case VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT: {
+                    auto const& conservative {
+                        *reinterpret_cast<const VkPipelineRasterizationConservativeStateCreateInfoEXT *>(next)
+                    };
+                    switch (conservative.conservativeRasterizationMode) {
+                        case VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT:
+                            conservative_rasterization = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+                            break;
+                        case VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT:
+                        case VK_CONSERVATIVE_RASTERIZATION_MODE_UNDERESTIMATE_EXT:
+                            conservative_rasterization = D3D12_CONSERVATIVE_RASTERIZATION_MODE_ON;
+                            break;
+                    }
+                } break;
+            }
+            next = static_cast<const VkStructureType *>(next++);
+        }
+
         D3D12_RASTERIZER_DESC rasterizer_desc {
             fill_mode,
             cull_mode,
@@ -4031,7 +4054,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
             FALSE,
             FALSE, // TODO: AA lines
             0, // TODO: forced sample count
-            D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF
+            conservative_rasterization
         };
 
         pipeline->static_state.depth_bias = rasterizer_desc.DepthBias;
