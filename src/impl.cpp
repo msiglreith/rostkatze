@@ -250,6 +250,7 @@ struct physical_device_t {
     ComPtr<IDXGIAdapter4> adapter;
 
     physical_device_properties_t properties;
+    std::optional<VkPhysicalDeviceConservativeRasterizationPropertiesEXT> conservative_properties;
     VkPhysicalDeviceMemoryProperties memory_properties;
     span<const heap_properties_t> heap_properties;
 
@@ -278,6 +279,7 @@ public:
         struct adapter_info_t {
             ComPtr<IDXGIAdapter4> adapter;
             physical_device_properties_t properties;
+            std::optional<VkPhysicalDeviceConservativeRasterizationPropertiesEXT> conservative_properties;
             VkPhysicalDeviceMemoryProperties memory_properties;
             span<const heap_properties_t> heap_properties;
             VkPhysicalDeviceLimits limits;
@@ -337,6 +339,50 @@ public:
                 }
             }
 
+            D3D12_FEATURE_DATA_D3D12_OPTIONS feature_options { 0 };
+            {
+                const auto hr {
+                    device->CheckFeatureSupport(
+                        D3D12_FEATURE_D3D12_OPTIONS,
+                        &feature_options,
+                        sizeof(feature_options)
+                    )
+                };
+                // TODO: error handling
+            }
+            std::optional<VkPhysicalDeviceConservativeRasterizationPropertiesEXT> conservative_properties { std::nullopt };
+            if (feature_options.ConservativeRasterizationTier) {
+                VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservative;
+                conservative.maxExtraPrimitiveOverestimationSize = 0.0;
+                conservative.conservativePointAndLineRasterization = false;
+                conservative.degenerateLinesRasterized = false; // not supported anyways?
+                conservative.conservativeRasterizationPostDepthCoverage = false; // TODO: check again
+
+                switch (feature_options.ConservativeRasterizationTier) {
+                    case D3D12_CONSERVATIVE_RASTERIZATION_TIER_1: {
+                        conservative.primitiveOverestimationSize = 0.5;
+                        conservative.primitiveUnderestimation = false;
+                        conservative.degenerateTrianglesRasterized = false;
+                        conservative.fullyCoveredFragmentShaderInputVariable = false;
+
+                    } break;
+                    case D3D12_CONSERVATIVE_RASTERIZATION_TIER_2: {
+                        conservative.primitiveOverestimationSize = 1.0 / 256.0f;
+                        conservative.primitiveUnderestimation = false;
+                        conservative.degenerateTrianglesRasterized = true;
+                        conservative.fullyCoveredFragmentShaderInputVariable = false;
+                    } break;
+                    case D3D12_CONSERVATIVE_RASTERIZATION_TIER_3: {
+                        conservative.primitiveOverestimationSize = 1.0 / 256.0f;
+                        conservative.primitiveUnderestimation = true;
+                        conservative.degenerateTrianglesRasterized = true;
+                        conservative.fullyCoveredFragmentShaderInputVariable = true; // TODO: SPIRV-Cross support
+                    } break;
+                }
+                conservative_properties = conservative;
+            }
+
+
             D3D12_FEATURE_DATA_ARCHITECTURE feature_architecture { 0 };
             {
                 const auto hr {
@@ -351,7 +397,6 @@ public:
                     // TODO
                 }
             }
-
             const auto uma { feature_architecture.UMA };
             const auto cc_uma { feature_architecture.CacheCoherentUMA };
 
@@ -460,6 +505,7 @@ public:
                 adapter_info_t {
                     adapter,
                     properties,
+                    conservative_properties,
                     memory_properties,
                     heap_properties,
                     limits,
@@ -473,6 +519,7 @@ public:
             auto& adapter { this->_adapters[i] };
             adapter.adapter = adapters[i].adapter;
             adapter.properties = adapters[i].properties;
+            adapter.conservative_properties = adapters[i].conservative_properties;
             adapter.memory_properties = adapters[i].memory_properties;
             adapter.heap_properties = adapters[i].heap_properties;
             adapter.limits = adapters[i].limits;
@@ -2615,13 +2662,16 @@ VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionProperties(
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceExtensionProperties(
-    VkPhysicalDevice                            physicalDevice,
+    VkPhysicalDevice                            _physicalDevice,
     const char*                                 pLayerName,
     uint32_t*                                   pPropertyCount,
     VkExtensionProperties*                      pProperties
 ) {
     TRACE("vkEnumerateInstanceExtensionProperties");
-    const std::array<VkExtensionProperties, 3> extensions {{
+
+    auto physical_device { reinterpret_cast<physical_device_t *>(_physicalDevice) };
+
+    std::vector<VkExtensionProperties> extensions {{
         {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_KHR_SWAPCHAIN_SPEC_VERSION,
@@ -2630,11 +2680,14 @@ VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceExtensionProperties(
             VK_KHR_MAINTENANCE1_EXTENSION_NAME,
             VK_KHR_MAINTENANCE1_SPEC_VERSION,
         },
-        {
+    }};
+
+    if (physical_device->conservative_properties) {
+        extensions.push_back({
             VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
             VK_EXT_CONSERVATIVE_RASTERIZATION_SPEC_VERSION,
-        },
-    }};
+        });
+    }
 
     auto result { VK_SUCCESS };
 
@@ -7165,8 +7218,6 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures2KHR(
 ) {
     TRACE("vkGetPhysicalDeviceFeatures2KHR");
 
-    pFeatures->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
-    pFeatures->pNext = nullptr;
     vkGetPhysicalDeviceFeatures(_physicalDevice, &pFeatures->features);
 }
 
@@ -7176,8 +7227,31 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties2KHR(
 ) {
     TRACE("vkGetPhysicalDeviceProperties2KHR");
 
-    pProperties->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR;
-    pProperties->pNext = nullptr;
+    auto physical_device { reinterpret_cast<physical_device_t *>(_physicalDevice) };
+
+    auto next { static_cast<VkStructureType *>(pProperties->pNext) };
+    while (next) {
+        switch (*next) {
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT: {
+                if (physical_device->conservative_properties) {
+                    const auto& conservative { *physical_device->conservative_properties };
+                    auto& properties { *reinterpret_cast<VkPhysicalDeviceConservativeRasterizationPropertiesEXT *>(next) };
+
+                    properties.primitiveOverestimationSize                  = conservative.primitiveOverestimationSize;
+                    properties.maxExtraPrimitiveOverestimationSize          = conservative.maxExtraPrimitiveOverestimationSize;
+                    properties.extraPrimitiveOverestimationSizeGranularity  = conservative.extraPrimitiveOverestimationSizeGranularity;
+                    properties.primitiveUnderestimation                     = conservative.primitiveUnderestimation;
+                    properties.conservativePointAndLineRasterization        = conservative.conservativePointAndLineRasterization;
+                    properties.degenerateTrianglesRasterized                = conservative.degenerateTrianglesRasterized;
+                    properties.degenerateLinesRasterized                    = conservative.degenerateLinesRasterized;
+                    properties.fullyCoveredFragmentShaderInputVariable      = conservative.fullyCoveredFragmentShaderInputVariable;
+                    properties.conservativeRasterizationPostDepthCoverage   = conservative.conservativeRasterizationPostDepthCoverage;
+                }
+            } break;
+        }
+        next = static_cast<VkStructureType *>(next++);
+    }
+
     vkGetPhysicalDeviceProperties(_physicalDevice, &pProperties->properties);
 }
 
@@ -7188,8 +7262,6 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties2KHR(
 ) {
     TRACE("vkGetPhysicalDeviceFormatProperties2KHR");
 
-    pFormatProperties->sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2_KHR;
-    pFormatProperties->pNext = nullptr;
     vkGetPhysicalDeviceFormatProperties(_physicalDevice, format, &pFormatProperties->formatProperties);
 }
 
@@ -7202,8 +7274,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceImageFormatProperties2KHR(
 
     auto const& info { *pImageFormatInfo };
 
-    pImageFormatProperties->sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2_KHR;
-    pImageFormatProperties->pNext = nullptr;
     const auto result {
         vkGetPhysicalDeviceImageFormatProperties(
             _physicalDevice,
@@ -7225,8 +7295,6 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties2KHR(
 ) {
     TRACE("vkGetPhysicalDeviceQueueFamilyProperties2KHR");
 
-    pQueueFamilyProperties->sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2_KHR;
-    pQueueFamilyProperties->pNext = nullptr;
     vkGetPhysicalDeviceQueueFamilyProperties(
         _physicalDevice,
         pQueueFamilyPropertyCount,
@@ -7242,8 +7310,6 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceMemoryProperties2KHR(
 ) {
     TRACE("vkGetPhysicalDeviceMemoryProperties2KHR");
 
-    pMemoryProperties->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2_KHR;
-    pMemoryProperties->pNext = nullptr;
     vkGetPhysicalDeviceMemoryProperties(_physicalDevice, &pMemoryProperties->memoryProperties);
 }
 
