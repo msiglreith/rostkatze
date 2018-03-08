@@ -62,6 +62,8 @@ Good luck!
 - imgui
 - multisampling
 - ssao
+- parallaxmapping
+- conservative rasterization
 
 ## Partially working
 
@@ -77,6 +79,5 @@ Good luck!
 - n-body (bug in samples/UB/portability)
 - raytracing (reading structs from byteaddressbuffer not supported)
 - culllod (indirect drawing, num_workgroups builtin, ..)
-- parallax (samples bug?)
 
 - All tessellation and geometry samples
