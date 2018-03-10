@@ -1778,7 +1778,7 @@ struct semaphore_t {
 
 struct surface_t {
     ComPtr<IDXGIFactory5> dxgi_factory;
-    HWND hwnd;
+    std::variant<HWND, IUnknown*> handle;
 };
 
 struct swapchain_t {
@@ -6965,23 +6965,37 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(
         0, // TODO: flags
     };
 
-    {
-        const auto hr {
-            surface->dxgi_factory->CreateSwapChainForHwnd(
-                device->present_queue.queue.Get(),
-                surface->hwnd,
-                &desc,
-                nullptr, // TODO: fullscreen
-                nullptr, // TODO: restrict?
-                &dxgi_swapchain
-            )
-        };
+    const auto hr {
+        std::visit(
+            stdx::match(
+                [&] (HWND hwnd) {
+                    return surface->dxgi_factory->CreateSwapChainForHwnd(
+                        device->present_queue.queue.Get(),
+                        hwnd,
+                        &desc,
+                        nullptr, // TODO: fullscreen
+                        nullptr, // TODO: restrict?
+                        &dxgi_swapchain
+                    );
+                },
+                [&] (IUnknown* window) {
+                    return surface->dxgi_factory->CreateSwapChainForCoreWindow(
+                        device->present_queue.queue.Get(),
+                        window,
+                        &desc,
+                        nullptr, // TODO: restrict?
+                        &dxgi_swapchain
+                    );
+                }
+            ),
+            surface->handle
+        )
+    };
 
-        if (FAILED(hr)) {
-            assert(false);
-        }
-        // TODO: errror
+    if (FAILED(hr)) {
+        assert(false);
     }
+    // TODO: errror
 
     if (FAILED(dxgi_swapchain.As<IDXGISwapChain3>(&(swapchain->swapchain)))) {
         ERR("Couldn't convert swapchain to `IDXGISwapChain3`!");
@@ -7128,22 +7142,36 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
 
     auto surface { reinterpret_cast<surface_t *>(_surface) };
 
-    RECT rect;
-    if (!::GetClientRect(surface->hwnd, &rect)) {
-        // TODO
-        ERR("Couldn't get size of window");
-    }
+    VkExtent2D current, min_extent, max_extent;
+    std::visit(
+        stdx::match(
+            [&] (HWND hwnd) {
+                RECT rect;
+                if (!::GetClientRect(hwnd, &rect)) {
+                    // TODO
+                    ERR("Couldn't get size of window");
+                }
 
-    const auto width { static_cast<uint32_t>(rect.right - rect.left) };
-    const auto height { static_cast<uint32_t>(rect.bottom - rect.top) };
+                min_extent.width = max_extent.width = current.width = static_cast<uint32_t>(rect.right - rect.left);
+                min_extent.height = max_extent.height = current.height = static_cast<uint32_t>(rect.bottom - rect.top);
+            },
+            [&] (IUnknown *) {
+                // TODO: needs to be tested..
+                current.width = current.height = 0xFFFFFFFF;
+                min_extent.width = min_extent.height = 1;
+                max_extent.width = max_extent.height = 0xFFFFFFFF;
+            }
+        ),
+        surface->handle
+    );
 
     *pSurfaceCapabilities = {
         // Image count due to FLIP_DISCARD
         2, // minImageCount
         16, // maxImageCount
-        { width, height }, // currentExtent
-        { width, height }, //minImageExtent
-        { width, height }, // maxImageExtent
+        current, // currentExtent
+        min_extent, // minImageExtent
+        max_extent, // maxImageExtent
         1, // maxImageArrayLayers // TODO
         VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, // supportedTransforms // TODO
         VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, // currentTransform // TODO
@@ -7229,7 +7257,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(
 ) {
     TRACE("vkCreateWin32SurfaceKHR unimplemented");
 
-    // TODO: multiple surfaces?
     auto instance { reinterpret_cast<instance_t *>(_instance) };
     auto const& info { *pCreateInfo };
 
@@ -7238,6 +7265,13 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(
     );
 
     return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL vkGetPhysicalDeviceWin32PresentationSupportKHR(
+    VkPhysicalDevice                            physicalDevice,
+    uint32_t                                    queueFamilyIndex
+) {
+    return queueFamilyIndex == QUEUE_FAMILY_GENERAL_PRESENT;
 }
 
 VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures2KHR(
@@ -7348,4 +7382,29 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
 ) {
     TRACE("vkGetPhysicalDeviceSparseImageFormatProperties2KHR");
     WARN("vkGetPhysicalDeviceSparseImageFormatProperties2KHR unimplemented");
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateUWPSurfaceRKZ(
+    VkInstance                                  _instance,
+    const VkUWPSurfaceCreateInfoRKZ*            pCreateInfo,
+    const VkAllocationCallbacks*                pAllocator,
+    VkSurfaceKHR*                               pSurface
+) {
+    TRACE("vkCreateUWPSurfaceRKZ");
+
+    auto instance { reinterpret_cast<instance_t *>(_instance) };
+    auto const& info { *pCreateInfo };
+
+    *pSurface = reinterpret_cast<VkSurfaceKHR>(
+        new surface_t { instance->dxgi_factory, info.pWindow}
+    );
+
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL vkGetPhysicalDeviceUWPPresentationSupportRKZ(
+    VkPhysicalDevice                            physicalDevice,
+    uint32_t                                    queueFamilyIndex
+) {
+    return queueFamilyIndex == QUEUE_FAMILY_GENERAL_PRESENT;
 }
