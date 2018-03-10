@@ -360,6 +360,10 @@ typedef enum VkStructureType {
     VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT = 1000178000,
     VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT = 1000178001,
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT = 1000178002,
+
+    // rostkatze: specific extensions
+    VK_STRUCTURE_TYPE_UWP_SURFACE_CREATE_INFO_RKZ = 1001000000,
+
     VK_STRUCTURE_TYPE_BEGIN_RANGE = VK_STRUCTURE_TYPE_APPLICATION_INFO,
     VK_STRUCTURE_TYPE_END_RANGE = VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
     VK_STRUCTURE_TYPE_RANGE_SIZE = (VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO - VK_STRUCTURE_TYPE_APPLICATION_INFO + 1),
@@ -7024,6 +7028,39 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetMemoryHostPointerPropertiesEXT(
     const void*                                 pHostPointer,
     VkMemoryHostPointerPropertiesEXT*           pMemoryHostPointerProperties);
 #endif
+
+#ifdef VK_USE_PLATFORM_UWP_RKZ
+#define VK_RKZ_uwp_surface 1
+#include <windows.h>
+
+#define VK_RKZ_UWP_SURFACE_SPEC_VERSION 1
+#define VK_RKZ_UWP_SURFACE_EXTENSION_NAME "VK_RKZ_uwp_surface"
+
+typedef VkFlags VkUWPSurfaceCreateFlagsRKZ;
+
+typedef struct VkUWPSurfaceCreateInfoRKZ {
+    VkStructureType                 sType;
+    const void*                     pNext;
+    VkUWPSurfaceCreateFlagsRKZ      flags;
+    IUnknown*                       pWindow;
+} VkUWPSurfaceCreateInfoRKZ;
+
+
+typedef VkResult (VKAPI_PTR *PFN_vkCreateUWPSurfaceRKZ)(VkInstance instance, const VkUWPSurfaceCreateInfoRKZ* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface);
+typedef VkBool32 (VKAPI_PTR *PFN_vkGetPhysicalDeviceUWPPresentationSupportRKZ)(VkPhysicalDevice physicalDevice, uint32_t queueFamilyIndex);
+
+#ifndef VK_NO_PROTOTYPES
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateUWPSurfaceRKZ(
+    VkInstance                                  instance,
+    const VkUWPSurfaceCreateInfoRKZ*          pCreateInfo,
+    const VkAllocationCallbacks*                pAllocator,
+    VkSurfaceKHR*                               pSurface);
+
+VKAPI_ATTR VkBool32 VKAPI_CALL vkGetPhysicalDeviceUWPPresentationSupportRKZ(
+    VkPhysicalDevice                            physicalDevice,
+    uint32_t                                    queueFamilyIndex);
+#endif
+#endif /* VK_USE_PLATFORM_UWP_RKZ */
 
 #ifdef __cplusplus
 }

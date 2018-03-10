@@ -5,6 +5,7 @@
 #include <DXGIFormat.h>
 
 #define VK_USE_PLATFORM_WIN32_KHR
+#define VK_USE_PLATFORM_UWP_KHR
 #include <vulkan.hpp>
 
 #include <array>
