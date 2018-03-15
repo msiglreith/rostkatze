@@ -54,6 +54,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
+#include <Corewindow.h>
 #include <wrl.h>
 
 #include <d3d12.h>
@@ -7142,36 +7143,43 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
 
     auto surface { reinterpret_cast<surface_t *>(_surface) };
 
-    VkExtent2D current, min_extent, max_extent;
-    std::visit(
-        stdx::match(
-            [&] (HWND hwnd) {
-                RECT rect;
-                if (!::GetClientRect(hwnd, &rect)) {
-                    // TODO
-                    ERR("Couldn't get size of window");
-                }
+    const auto hwnd {
+        std::visit(
+            stdx::match(
+                [&] (HWND hwnd) {
+                    return hwnd;
+                },
+                [&] (IUnknown *window) {
+                    ComPtr<ICoreWindowInterop> core_window { nullptr };
+                    window->QueryInterface(core_window.GetAddressOf());
 
-                min_extent.width = max_extent.width = current.width = static_cast<uint32_t>(rect.right - rect.left);
-                min_extent.height = max_extent.height = current.height = static_cast<uint32_t>(rect.bottom - rect.top);
-            },
-            [&] (IUnknown *) {
-                // TODO: needs to be tested..
-                current.width = current.height = 0xFFFFFFFF;
-                min_extent.width = min_extent.height = 1;
-                max_extent.width = max_extent.height = 0xFFFFFFFF;
-            }
-        ),
-        surface->handle
-    );
+                    HWND hwnd;
+                    core_window->get_WindowHandle(&hwnd);
+                    return hwnd;
+                }
+            ),
+            surface->handle
+        )
+    };
+
+    RECT rect;
+    if (!::GetClientRect(hwnd, &rect)) {
+        // TODO
+        ERR("Couldn't get size of window");
+    }
+
+    VkExtent2D extent {
+        static_cast<uint32_t>(rect.right - rect.left),
+        static_cast<uint32_t>(rect.bottom - rect.top),
+    };
 
     *pSurfaceCapabilities = {
         // Image count due to FLIP_DISCARD
         2, // minImageCount
         16, // maxImageCount
-        current, // currentExtent
-        min_extent, // minImageExtent
-        max_extent, // maxImageExtent
+        extent, // currentExtent
+        extent, // minImageExtent
+        extent, // maxImageExtent
         1, // maxImageArrayLayers // TODO
         VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, // supportedTransforms // TODO
         VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, // currentTransform // TODO

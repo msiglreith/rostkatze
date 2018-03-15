@@ -58,7 +58,8 @@ extern std::array<VkFormatProperties, VK_FORMAT_RANGE_SIZE> formats_property;
     VK_FNC(vkGetDeviceProcAddr) \
     VK_FNC(vkEnumeratePhysicalDevices) \
     VK_FNC(vkCreateDevice) \
-    VK_FNC(vkCreateWin32SurfaceKHR)
+    VK_FNC(vkCreateWin32SurfaceKHR) \
+    VK_FNC(vkCreateUWPSurfaceRKZ)
 
 #define VK_PHYSICAL_DEVICE_FNC() \
     VK_FNC(vkGetPhysicalDeviceFeatures) \
@@ -78,7 +79,8 @@ extern std::array<VkFormatProperties, VK_FORMAT_RANGE_SIZE> formats_property;
     VK_FNC(vkGetPhysicalDeviceImageFormatProperties2KHR) \
     VK_FNC(vkGetPhysicalDeviceQueueFamilyProperties2KHR) \
     VK_FNC(vkGetPhysicalDeviceMemoryProperties2KHR) \
-    VK_FNC(vkGetPhysicalDeviceSparseImageFormatProperties2KHR)
+    VK_FNC(vkGetPhysicalDeviceSparseImageFormatProperties2KHR) \
+    VK_FNC(vkGetPhysicalDeviceUWPPresentationSupportRKZ)
 
 #define VK_DEVICE_FNC() \
     VK_FNC(vkDestroyDevice) \
