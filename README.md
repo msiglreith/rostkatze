@@ -20,7 +20,8 @@ Currently, lacks a lot functionality but can run quite a few Vulkan samples alre
 
 To able to use it latest Windows 10 Update is required (atm) and a GPU with Resource Tier 2 hardware (no NVIDIA!).
 
-The library can be built with VS 2017 (C++17 support). In order to use the `rostkatze` ICD set the `VK_ICD_FILENAMES` variable to the path of `rostkatze_debug.json`.
+The library can be built with VS 2017 (C++17 support). In order to use the `rostkatze` ICD set the `VK_ICD_FILENAMES` variable to the path of `manifest/rostkatze.json`.
+Adjust the library path field in the manifest to the absolute path of the rostkatze shared library.
 
 Good luck!
 
