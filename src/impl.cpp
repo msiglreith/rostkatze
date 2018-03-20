@@ -253,7 +253,6 @@ struct physical_device_properties_t {
 };
 
 struct physical_device_t {
-    std::mutex is_open;
     ComPtr<IDXGIAdapter4> adapter;
 
     physical_device_properties_t properties;
@@ -2332,11 +2331,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(
 ) {
     TRACE("vkCreateDevice");
 
-    // TODO: handle lock on device destruction
     auto physical_device { reinterpret_cast<physical_device_t *>(_physicalDevice) };
-    if (!physical_device->is_open.try_lock()) {
-        return VK_ERROR_TOO_MANY_OBJECTS;
-    }
 
     auto const& info { *pCreateInfo };
     span<const VkDeviceQueueCreateInfo> queue_infos { info.pQueueCreateInfos, info.queueCreateInfoCount };
