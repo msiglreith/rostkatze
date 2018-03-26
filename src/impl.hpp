@@ -43,6 +43,14 @@ struct image_view_t;
 
 static const size_t MAX_VERTEX_BUFFER_SLOTS = 16;
 
+enum queue_family {
+    QUEUE_FAMILY_GENERAL_PRESENT = 0,
+    QUEUE_FAMILY_GENERAL,
+    QUEUE_FAMILY_COMPUTE,
+    QUEUE_FAMILY_COPY,
+};
+
+
 static auto init_debug_interface() -> void {
     static auto initialized { false };
     if (initialized) {

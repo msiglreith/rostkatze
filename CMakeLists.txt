@@ -28,6 +28,7 @@ add_library(rostkatze SHARED
     src/formats.cpp
     src/lib.cpp
     src/impl.cpp
+    src/wsi.cpp
 )
 
 target_link_libraries(rostkatze dxgi d3d12 d3dcompiler spirv-cross-hlsl)
