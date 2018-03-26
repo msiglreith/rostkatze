@@ -43,7 +43,7 @@ struct image_view_t;
 
 static const size_t MAX_VERTEX_BUFFER_SLOTS = 16;
 
-auto init_debug_interface() {
+static auto init_debug_interface() -> void {
     static auto initialized { false };
     if (initialized) {
         return;
@@ -763,3 +763,13 @@ struct pipeline_t {
     std::optional<std::tuple<FLOAT, FLOAT>> static_depth_bounds;
     std::optional<UINT> static_stencil_reference;
 };
+
+static auto up_align(UINT v, UINT alignment) -> UINT {
+    return (v + alignment - 1) & ~(alignment - 1);
+}
+
+auto create_command_signature(
+    ID3D12Device* device,
+    D3D12_INDIRECT_ARGUMENT_TYPE type,
+    UINT stride
+) -> ComPtr<ID3D12CommandSignature>;

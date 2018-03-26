@@ -24,6 +24,7 @@ add_subdirectory(deps/spirv-cross)
 include_directories(deps/D3DX12)
 
 add_library(rostkatze SHARED
+    src/command_list.cpp
     src/formats.cpp
     src/lib.cpp
     src/impl.cpp
