@@ -106,10 +106,215 @@ public:
 
     ~command_buffer_t() {}
 
+private:
     auto operator->() -> ID3D12GraphicsCommandList2* {
         return this->command_list.Get();
     }
 
+// Native functionality
+public:
+    auto resolve_subresource(
+        ID3D12Resource *pDstResource,
+        UINT           DstSubresource,
+        ID3D12Resource *pSrcResource,
+        UINT           SrcSubresource,
+        DXGI_FORMAT    Format
+    ) {
+        this->command_list->ResolveSubresource(
+            pDstResource,
+            DstSubresource,
+            pSrcResource,
+            SrcSubresource,
+            Format
+        );
+    }
+
+    auto cmd_set_descriptor_heaps(
+        UINT                        NumDescriptorHeaps,
+        ID3D12DescriptorHeap *const *ppDescriptorHeaps
+    ) {
+        this->command_list->SetDescriptorHeaps(
+            NumDescriptorHeaps,
+            ppDescriptorHeaps
+        );
+    }
+
+    auto cmd_set_compute_root_signature(ID3D12RootSignature *pRootSignature) {
+        this->command_list->SetComputeRootSignature(pRootSignature);
+    }
+
+    auto cmd_set_graphics_root_signature(ID3D12RootSignature *pRootSignature) {
+        this->command_list->SetGraphicsRootSignature(pRootSignature);
+    }
+
+    auto cmd_set_compute_root_descriptor_table(
+        UINT                        RootParameterIndex,
+        D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor
+    ) {
+        this->command_list->SetComputeRootDescriptorTable(
+            RootParameterIndex,
+            BaseDescriptor
+        );
+    }
+
+    auto cmd_set_compute_root_constants(
+        UINT RootParameterIndex,
+        UINT Num32BitValuesToSet,
+        const void *pSrcData,
+        UINT DestOffsetIn32BitValues
+    ) {
+        this->command_list->SetComputeRoot32BitConstants(
+            RootParameterIndex,
+            Num32BitValuesToSet,
+            pSrcData,
+            DestOffsetIn32BitValues
+        );
+    }
+
+    auto cmd_set_compute_root_shader_resource_view(
+        UINT                      RootParameterIndex,
+        D3D12_GPU_VIRTUAL_ADDRESS BufferLocation
+    ) {
+       this->command_list->SetComputeRootShaderResourceView(
+            RootParameterIndex,
+            BufferLocation
+       );
+    }
+
+    auto cmd_set_primitive_topolgy(D3D12_PRIMITIVE_TOPOLOGY PrimitiveTopology) {
+        this->command_list->IASetPrimitiveTopology(PrimitiveTopology);
+    }
+
+    auto cmd_set_scissors(UINT NumRects, const D3D12_RECT *pRects) {
+        this->command_list->RSSetScissorRects(NumRects, pRects);
+    }
+
+    auto cmd_set_viewports(UINT NumViewports, const D3D12_VIEWPORT *pViewports) {
+        this->command_list->RSSetViewports(NumViewports, pViewports);
+    }
+
+    auto cmd_set_blend_factor(const FLOAT BlendFactor[4]) {
+        this->command_list->OMSetBlendFactor(BlendFactor);
+    }
+
+    auto cmd_set_stencil_ref(UINT StencilRef) {
+        this->command_list->OMSetStencilRef(StencilRef);
+    }
+
+    auto cmd_set_depth_bounds(FLOAT Min, FLOAT Max) {
+        this->command_list->OMSetDepthBounds(Min, Max);
+    }
+
+    auto cmd_set_index_buffer(const D3D12_INDEX_BUFFER_VIEW *pView) {
+        this->command_list->IASetIndexBuffer(pView);
+    }
+
+    auto cmd_copy_buffer_region(
+        ID3D12Resource *pDstBuffer,
+        UINT64         DstOffset,
+        ID3D12Resource *pSrcBuffer,
+        UINT64         SrcOffset,
+        UINT64         NumBytes
+    ) {
+        this->command_list->CopyBufferRegion(
+            pDstBuffer,
+            DstOffset,
+            pSrcBuffer,
+            SrcOffset,
+            NumBytes
+        );
+    }
+
+    auto cmd_copy_texture_region(
+        const D3D12_TEXTURE_COPY_LOCATION *pDst,
+        UINT                        DstX,
+        UINT                        DstY,
+        UINT                        DstZ,
+        const D3D12_TEXTURE_COPY_LOCATION *pSrc,
+        const D3D12_BOX                   *pSrcBox
+    ) {
+        this->command_list->CopyTextureRegion(
+            pDst,
+            DstX,
+            DstY,
+            DstZ,
+            pSrc,
+            pSrcBox
+        );
+    }
+
+    auto cmd_set_pipeline_state(ID3D12PipelineState *pPipelineState) {
+        this->command_list->SetPipelineState(pPipelineState);
+    }
+
+    auto cmd_dispatch(
+        UINT ThreadGroupCountX,
+        UINT ThreadGroupCountY,
+        UINT ThreadGroupCountZ
+    ) {
+        this->command_list->Dispatch(
+            ThreadGroupCountX,
+            ThreadGroupCountY,
+            ThreadGroupCountZ
+        );
+    }
+
+    auto cmd_draw_instanced(
+        UINT VertexCountPerInstance,
+        UINT InstanceCount,
+        UINT StartVertexLocation,
+        UINT StartInstanceLocation
+    ) {
+        this->command_list->DrawInstanced(
+            VertexCountPerInstance,
+            InstanceCount,
+            StartVertexLocation,
+            StartInstanceLocation
+        );
+    }
+
+    auto cmd_draw_indexed_instanced(
+        UINT IndexCountPerInstance,
+        UINT InstanceCount,
+        UINT StartIndexLocation,
+        INT  BaseVertexLocation,
+        UINT StartInstanceLocation
+    ) {
+        this->command_list->DrawIndexedInstanced(
+            IndexCountPerInstance,
+            InstanceCount,
+            StartIndexLocation,
+            BaseVertexLocation,
+            StartInstanceLocation
+        );
+    }
+
+    auto cmd_execute_indirect(
+        ID3D12CommandSignature *pCommandSignature,
+        UINT                   MaxCommandCount,
+        ID3D12Resource         *pArgumentBuffer,
+        UINT64                 ArgumentBufferOffset,
+        ID3D12Resource         *pCountBuffer,
+        UINT64                 CountBufferOffset
+    ) {
+        this->command_list->ExecuteIndirect(
+            pCommandSignature,
+            MaxCommandCount,
+            pArgumentBuffer,
+            ArgumentBufferOffset,
+            pCountBuffer,
+            CountBufferOffset
+        );
+    }
+
+    auto cmd_resource_barrier(
+        UINT                   NumBarriers,
+        const D3D12_RESOURCE_BARRIER *pBarriers
+    ) {
+        this->command_list->ResourceBarrier(NumBarriers, pBarriers);
+    }
+
+public:
     auto reset() -> void {
         this->command_list->Reset(this->allocator, nullptr);
 
@@ -588,7 +793,7 @@ public:
             auto color_view { framebuffer->attachments[color_attachment.attachment] };
             auto resolve_view { framebuffer->attachments[resolve_attachment.attachment] };
 
-            this->command_list->ResolveSubresource(
+            resolve_subresource(
                 resolve_view->image,
                 0, // TODO: D3D12CalcSubresource(resolve_view->)
                 color_view->image,
@@ -605,6 +810,7 @@ private:
 public:
     //
     ComPtr<ID3D12GraphicsCommandList2> command_list;
+
     std::optional<pipeline_slot_type> active_slot;
     ID3D12PipelineState* active_pipeline;
 
