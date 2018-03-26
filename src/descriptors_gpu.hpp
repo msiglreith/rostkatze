@@ -1,3 +1,5 @@
+#pragma once
+
 #include "icd.hpp"
 
 #include <d3d12.h>
