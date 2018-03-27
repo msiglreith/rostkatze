@@ -1370,7 +1370,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdSetEvent(
     VkEvent                                     event,
     VkPipelineStageFlags                        stageMask
 ) {
-    TRACE("");
+    TRACE("vkCmdSetEvent");
     WARN("unimplemented");
 }
 
@@ -1379,7 +1379,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdResetEvent(
     VkEvent                                     event,
     VkPipelineStageFlags                        stageMask
 ) {
-    TRACE("");
+    TRACE("vkCmdResetEvent");
     WARN("unimplemented");
 }
 
@@ -1422,7 +1422,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBeginQuery(
     uint32_t                                    query,
     VkQueryControlFlags                         flags
 ) {
-    TRACE("");
+    TRACE("vkCmdBeginQuery");
     WARN("unimplemented");
 }
 
@@ -1431,7 +1431,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdEndQuery(
     VkQueryPool                                 queryPool,
     uint32_t                                    query
 ) {
-    TRACE("");
+    TRACE("vkCmdEndQuery");
     WARN("unimplemented");
 }
 
