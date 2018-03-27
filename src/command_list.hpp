@@ -3,6 +3,8 @@
 #include "impl.hpp"
 #include "device.hpp"
 
+#include "command_recorder.hpp"
+
 #include <stdx/hash.hpp>
 #include <stdx/match.hpp>
 
@@ -86,9 +88,17 @@ public:
     };
 
 public:
-    command_buffer_t(ID3D12DescriptorHeap* heap_cbv_srv_uav, ID3D12DescriptorHeap* heap_sampler) :
+    command_buffer_t(
+        ID3D12CommandAllocator* allocator,
+        ComPtr<ID3D12GraphicsCommandList2> cmd_list,
+        device_t* device,
+        ID3D12DescriptorHeap* heap_cbv_srv_uav,
+        ID3D12DescriptorHeap* heap_sampler
+    ) :
         loader_magic { ICD_LOADER_MAGIC },
-        command_list { nullptr },
+        allocator { allocator },
+        command_list { cmd_list },
+        command_recorder { cmd_list.Get() },
         heap_cbv_srv_uav { heap_cbv_srv_uav },
         heap_sampler { heap_sampler },
         pass_cache { std::nullopt },
@@ -99,312 +109,12 @@ public:
         scissors_dirty { false },
         num_viewports_scissors { 0 },
         vertex_buffer_views_dirty { 0 },
-        _device { nullptr },
+        _device { device },
         dynamic_state { },
         index_type { VK_INDEX_TYPE_UINT16 }
     { }
 
     ~command_buffer_t() {}
-
-private:
-    auto operator->() -> ID3D12GraphicsCommandList2* {
-        return this->command_list.Get();
-    }
-
-// Native functionality
-public:
-    auto resolve_subresource(
-        ID3D12Resource *pDstResource,
-        UINT           DstSubresource,
-        ID3D12Resource *pSrcResource,
-        UINT           SrcSubresource,
-        DXGI_FORMAT    Format
-    ) {
-        this->command_list->ResolveSubresource(
-            pDstResource,
-            DstSubresource,
-            pSrcResource,
-            SrcSubresource,
-            Format
-        );
-    }
-
-    auto cmd_set_descriptor_heaps(
-        UINT                        NumDescriptorHeaps,
-        ID3D12DescriptorHeap *const *ppDescriptorHeaps
-    ) {
-        this->command_list->SetDescriptorHeaps(
-            NumDescriptorHeaps,
-            ppDescriptorHeaps
-        );
-    }
-
-    auto cmd_set_compute_root_signature(ID3D12RootSignature *pRootSignature) {
-        this->command_list->SetComputeRootSignature(pRootSignature);
-    }
-
-    auto cmd_set_graphics_root_signature(ID3D12RootSignature *pRootSignature) {
-        this->command_list->SetGraphicsRootSignature(pRootSignature);
-    }
-
-    auto cmd_set_compute_root_descriptor_table(
-        UINT                        RootParameterIndex,
-        D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor
-    ) {
-        this->command_list->SetComputeRootDescriptorTable(
-            RootParameterIndex,
-            BaseDescriptor
-        );
-    }
-
-    auto cmd_set_compute_root_constant(
-        UINT RootParameterIndex,
-        UINT SrcData,
-        UINT DestOffsetIn32BitValues
-    ) {
-        this->command_list->SetComputeRoot32BitConstant(
-            RootParameterIndex,
-            SrcData,
-            DestOffsetIn32BitValues
-        );
-    }
-
-    auto cmd_set_compute_root_constants(
-        UINT RootParameterIndex,
-        UINT Num32BitValuesToSet,
-        const void *pSrcData,
-        UINT DestOffsetIn32BitValues
-    ) {
-        this->command_list->SetComputeRoot32BitConstants(
-            RootParameterIndex,
-            Num32BitValuesToSet,
-            pSrcData,
-            DestOffsetIn32BitValues
-        );
-    }
-
-    auto cmd_set_compute_root_shader_resource_view(
-        UINT                      RootParameterIndex,
-        D3D12_GPU_VIRTUAL_ADDRESS BufferLocation
-    ) {
-       this->command_list->SetComputeRootShaderResourceView(
-            RootParameterIndex,
-            BufferLocation
-       );
-    }
-
-    auto cmd_set_graphics_root_constant(
-        UINT RootParameterIndex,
-        UINT SrcData,
-        UINT DestOffsetIn32BitValues
-    ) {
-        this->command_list->SetGraphicsRoot32BitConstant(
-            RootParameterIndex,
-            SrcData,
-            DestOffsetIn32BitValues
-        );
-    }
-
-    auto cmd_set_graphics_root_descriptor_table(
-        UINT                        RootParameterIndex,
-        D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor
-    ) {
-        this->command_list->SetGraphicsRootDescriptorTable(
-            RootParameterIndex,
-            BaseDescriptor
-        );
-    }
-
-    auto cmd_clear_render_target_view(
-        D3D12_CPU_DESCRIPTOR_HANDLE RenderTargetView,
-        const FLOAT                 ColorRGBA[4],
-        UINT                        NumRects,
-        const D3D12_RECT            *pRects
-    ) {
-        this->command_list->ClearRenderTargetView(
-            RenderTargetView,
-            ColorRGBA,
-            NumRects,
-            pRects
-        );
-    }
-
-    auto cmd_clear_depth_stencil_view(
-        D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView,
-        D3D12_CLEAR_FLAGS           ClearFlags,
-        FLOAT                       Depth,
-        UINT8                       Stencil,
-        UINT                        NumRects,
-        const D3D12_RECT            *pRects
-    ) {
-        this->command_list->ClearDepthStencilView(
-            DepthStencilView,
-            ClearFlags,
-            Depth,
-            Stencil,
-            NumRects,
-            pRects
-        );
-    }
-
-    auto cmd_set_render_targets(
-        UINT                                NumRenderTargetDescriptors,
-        const D3D12_CPU_DESCRIPTOR_HANDLE   *pRenderTargetDescriptors,
-        BOOL                                RTsSingleHandleToDescriptorRange,
-        const D3D12_CPU_DESCRIPTOR_HANDLE   *pDepthStencilDescriptor
-    ) {
-        this->command_list->OMSetRenderTargets(
-            NumRenderTargetDescriptors,
-            pRenderTargetDescriptors,
-            RTsSingleHandleToDescriptorRange,
-            pDepthStencilDescriptor
-        );
-    }
-
-    auto cmd_set_primitive_topolgy(D3D12_PRIMITIVE_TOPOLOGY PrimitiveTopology) {
-        this->command_list->IASetPrimitiveTopology(PrimitiveTopology);
-    }
-
-    auto cmd_set_scissors(UINT NumRects, const D3D12_RECT *pRects) {
-        this->command_list->RSSetScissorRects(NumRects, pRects);
-    }
-
-    auto cmd_set_viewports(UINT NumViewports, const D3D12_VIEWPORT *pViewports) {
-        this->command_list->RSSetViewports(NumViewports, pViewports);
-    }
-
-    auto cmd_set_blend_factor(const FLOAT BlendFactor[4]) {
-        this->command_list->OMSetBlendFactor(BlendFactor);
-    }
-
-    auto cmd_set_stencil_ref(UINT StencilRef) {
-        this->command_list->OMSetStencilRef(StencilRef);
-    }
-
-    auto cmd_set_depth_bounds(FLOAT Min, FLOAT Max) {
-        this->command_list->OMSetDepthBounds(Min, Max);
-    }
-
-    auto cmd_set_index_buffer(const D3D12_INDEX_BUFFER_VIEW *pView) {
-        this->command_list->IASetIndexBuffer(pView);
-    }
-
-    auto cmd_copy_buffer_region(
-        ID3D12Resource *pDstBuffer,
-        UINT64         DstOffset,
-        ID3D12Resource *pSrcBuffer,
-        UINT64         SrcOffset,
-        UINT64         NumBytes
-    ) {
-        this->command_list->CopyBufferRegion(
-            pDstBuffer,
-            DstOffset,
-            pSrcBuffer,
-            SrcOffset,
-            NumBytes
-        );
-    }
-
-    auto cmd_copy_texture_region(
-        const D3D12_TEXTURE_COPY_LOCATION *pDst,
-        UINT                        DstX,
-        UINT                        DstY,
-        UINT                        DstZ,
-        const D3D12_TEXTURE_COPY_LOCATION *pSrc,
-        const D3D12_BOX                   *pSrcBox
-    ) {
-        this->command_list->CopyTextureRegion(
-            pDst,
-            DstX,
-            DstY,
-            DstZ,
-            pSrc,
-            pSrcBox
-        );
-    }
-
-    auto cmd_set_pipeline_state(ID3D12PipelineState *pPipelineState) {
-        this->command_list->SetPipelineState(pPipelineState);
-    }
-
-    auto cmd_dispatch(
-        UINT ThreadGroupCountX,
-        UINT ThreadGroupCountY,
-        UINT ThreadGroupCountZ
-    ) {
-        this->command_list->Dispatch(
-            ThreadGroupCountX,
-            ThreadGroupCountY,
-            ThreadGroupCountZ
-        );
-    }
-
-    auto cmd_draw_instanced(
-        UINT VertexCountPerInstance,
-        UINT InstanceCount,
-        UINT StartVertexLocation,
-        UINT StartInstanceLocation
-    ) {
-        this->command_list->DrawInstanced(
-            VertexCountPerInstance,
-            InstanceCount,
-            StartVertexLocation,
-            StartInstanceLocation
-        );
-    }
-
-    auto cmd_draw_indexed_instanced(
-        UINT IndexCountPerInstance,
-        UINT InstanceCount,
-        UINT StartIndexLocation,
-        INT  BaseVertexLocation,
-        UINT StartInstanceLocation
-    ) {
-        this->command_list->DrawIndexedInstanced(
-            IndexCountPerInstance,
-            InstanceCount,
-            StartIndexLocation,
-            BaseVertexLocation,
-            StartInstanceLocation
-        );
-    }
-
-    auto cmd_execute_indirect(
-        ID3D12CommandSignature *pCommandSignature,
-        UINT                   MaxCommandCount,
-        ID3D12Resource         *pArgumentBuffer,
-        UINT64                 ArgumentBufferOffset,
-        ID3D12Resource         *pCountBuffer,
-        UINT64                 CountBufferOffset
-    ) {
-        this->command_list->ExecuteIndirect(
-            pCommandSignature,
-            MaxCommandCount,
-            pArgumentBuffer,
-            ArgumentBufferOffset,
-            pCountBuffer,
-            CountBufferOffset
-        );
-    }
-
-    auto cmd_resource_barrier(
-        UINT                   NumBarriers,
-        const D3D12_RESOURCE_BARRIER *pBarriers
-    ) {
-        this->command_list->ResourceBarrier(NumBarriers, pBarriers);
-    }
-
-    auto cmd_set_vertex_buffers(
-        UINT                     StartSlot,
-        UINT                     NumViews,
-        const D3D12_VERTEX_BUFFER_VIEW *pViews
-    ) {
-        this->command_list->IASetVertexBuffers(
-            StartSlot,
-            NumViews,
-            pViews
-        );
-    }
 
 public:
     auto reset() -> void {
@@ -494,7 +204,7 @@ public:
                 this->heap_cbv_srv_uav,
                 this->heap_sampler
             };
-            cmd_set_descriptor_heaps(2, &heaps[0]);
+            this->command_recorder.cmd_set_descriptor_heaps(2, &heaps[0]);
         }
 
 
@@ -506,7 +216,7 @@ public:
         }
 
         if (!this->active_pipeline) {
-            cmd_set_pipeline_state(
+            this->command_recorder.cmd_set_pipeline_state(
                 std::visit(
                     stdx::match(
                         [] (pipeline_t::unique_pso_t& pso) {
@@ -632,7 +342,7 @@ public:
         this->active_slot = SLOT_GRAPHICS;
 
         if (this->viewports_dirty) {
-            cmd_set_viewports(
+            this->command_recorder.cmd_set_viewports(
                 this->num_viewports_scissors,
                 this->viewports
             );
@@ -640,7 +350,7 @@ public:
         }
 
         if (this->scissors_dirty) {
-            cmd_set_scissors(
+            this->command_recorder.cmd_set_scissors(
                 this->num_viewports_scissors,
                 this->scissors
             );
@@ -658,7 +368,7 @@ public:
                         in_range = i;
                     }
                 } else if (in_range) {
-                    cmd_set_vertex_buffers(
+                    this->command_recorder.cmd_set_vertex_buffers(
                         static_cast<UINT>(*in_range),
                         static_cast<UINT>(i - *in_range),
                         this->vertex_buffer_views
@@ -668,7 +378,7 @@ public:
             }
 
             if (in_range) {
-                cmd_set_vertex_buffers(
+                this->command_recorder.cmd_set_vertex_buffers(
                     static_cast<UINT>(*in_range),
                     static_cast<UINT>(MAX_VERTEX_BUFFER_SLOTS - *in_range),
                     this->vertex_buffer_views
@@ -679,14 +389,14 @@ public:
         update_user_data(
             this->graphics_slot,
             [&] (UINT slot, uint32_t data, UINT offset) {
-                cmd_set_graphics_root_constant(
+                this->command_recorder.cmd_set_graphics_root_constant(
                     slot,
                     data,
                     offset
                 );
             },
             [&] (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle) {
-                cmd_set_graphics_root_descriptor_table(
+                this->command_recorder.cmd_set_graphics_root_descriptor_table(
                     slot,
                     handle
                 );
@@ -700,7 +410,7 @@ public:
                 this->heap_cbv_srv_uav,
                 this->heap_sampler
             };
-            cmd_set_descriptor_heaps(2, &heaps[0]);
+            this->command_recorder.cmd_set_descriptor_heaps(2, &heaps[0]);
         }
 
         if (this->active_slot != SLOT_COMPUTE) {
@@ -709,7 +419,7 @@ public:
         }
 
         if (!this->active_pipeline) {
-            cmd_set_pipeline_state(
+            this->command_recorder.cmd_set_pipeline_state(
                 std::get<pipeline_t::unique_pso_t>(this->compute_slot.pipeline->pso).pipeline.Get()
             );
         }
@@ -717,14 +427,14 @@ public:
         update_user_data(
             this->compute_slot,
             [&] (UINT slot, uint32_t data, UINT offset) {
-                cmd_set_compute_root_constant(
+                this->command_recorder.cmd_set_compute_root_constant(
                     slot,
                     data,
                     offset
                 );
             },
             [&] (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle) {
-                cmd_set_compute_root_descriptor_table(
+                this->command_recorder.cmd_set_compute_root_descriptor_table(
                     slot,
                     handle
                 );
@@ -755,10 +465,10 @@ public:
                 auto view { framebuffer->attachments[color_attachment.attachment] };
                 if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
                     // TODO: temp barriers...
-                    cmd_resource_barrier(1,
+                    this->command_recorder.cmd_resource_barrier(1,
                         &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET)
                     );
-                    cmd_clear_render_target_view(
+                    this->command_recorder.cmd_clear_render_target_view(
                         std::get<0>(*view->rtv),
                         clear_values[color_attachment.attachment].color.float32,
                         1,
@@ -790,10 +500,10 @@ public:
 
                 if (clear_flags) {
                     // TODO: temp barriers...
-                    cmd_resource_barrier(1,
+                    this->command_recorder.cmd_resource_barrier(1,
                         &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE)
                     );
-                    cmd_clear_depth_stencil_view(
+                    this->command_recorder.cmd_clear_depth_stencil_view(
                         std::get<0>(*view->dsv),
                         clear_flags,
                         depth,
@@ -821,7 +531,7 @@ public:
             dsv = &std::get<0>(*framebuffer->attachments[depth_attachment]->dsv);
         }
 
-        cmd_set_render_targets(
+        this->command_recorder.cmd_set_render_targets(
             static_cast<UINT>(num_rtvs),
             render_targets,
             !!dsv,
@@ -849,7 +559,7 @@ public:
                 auto view { framebuffer->attachments[color_attachment.attachment] };
                 if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
                     // TODO: temp barriers...
-                    cmd_resource_barrier(1,
+                    this->command_recorder.cmd_resource_barrier(1,
                         &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COMMON)
                     );
                 }
@@ -867,7 +577,7 @@ public:
 
                 if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
                     // TODO: temp barriers...
-                    cmd_resource_barrier(1,
+                    this->command_recorder.cmd_resource_barrier(1,
                         &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COMMON)
                     );
                 }
@@ -885,7 +595,7 @@ public:
             auto color_view { framebuffer->attachments[color_attachment.attachment] };
             auto resolve_view { framebuffer->attachments[resolve_attachment.attachment] };
 
-            resolve_subresource(
+            this->command_recorder.resolve_subresource(
                 resolve_view->image,
                 0, // TODO: D3D12CalcSubresource(resolve_view->)
                 color_view->image,
@@ -895,13 +605,18 @@ public:
         }
     }
 
+    auto raw_command_list() const -> ID3D12CommandList* {
+        return this->command_list.Get();
+    }
+
 private:
     /// Dispatchable object
     uintptr_t loader_magic;
 
-public:
-    //
     ComPtr<ID3D12GraphicsCommandList2> command_list;
+
+public:
+    command_buffer_recorder_native_t command_recorder;
 
     std::optional<pipeline_slot_type> active_slot;
     ID3D12PipelineState* active_pipeline;
@@ -920,9 +635,11 @@ public:
 
     device_t* _device;
 
+private:
     // Owning command allocator, required for reset
     ID3D12CommandAllocator* allocator;
 
+public:
     std::optional<pass_cache_t> pass_cache;
 
     pipeline_slot_t graphics_slot;

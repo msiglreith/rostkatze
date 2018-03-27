@@ -18,17 +18,17 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
                     command_buffer->heap_cbv_srv_uav,
                     command_buffer->heap_sampler
                 };
-                command_buffer->cmd_set_descriptor_heaps(2, &heaps[0]);
+                command_buffer->command_recorder.cmd_set_descriptor_heaps(2, &heaps[0]);
                 command_buffer->active_slot = command_buffer_t::SLOT_GRAPHICS;
             }
 
             if (command_buffer->graphics_slot.signature != signature) {
-                command_buffer->cmd_set_graphics_root_signature(signature);
+                command_buffer->command_recorder.cmd_set_graphics_root_signature(signature);
                 command_buffer->graphics_slot.signature = signature;
                 // TODO: descriptor sets
             }
             command_buffer->graphics_slot.pipeline = pipeline;
-            command_buffer->cmd_set_primitive_topolgy(pipeline->topology); // no need to cache this
+            command_buffer->command_recorder.cmd_set_primitive_topolgy(pipeline->topology); // no need to cache this
 
             for (auto i : range(MAX_VERTEX_BUFFER_SLOTS)) {
                 command_buffer->vertex_buffer_views[i].StrideInBytes = pipeline->vertex_strides[i];
@@ -36,30 +36,30 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
 
             // Apply static states
             if (pipeline->static_viewports) {
-                command_buffer->cmd_set_viewports(
+                command_buffer->command_recorder.cmd_set_viewports(
                     static_cast<UINT>(pipeline->static_viewports->size()),
                     pipeline->static_viewports->data()
                 );
                 command_buffer->viewports_dirty = false;
             }
             if (pipeline->static_scissors) {
-                command_buffer->cmd_set_scissors(
+                command_buffer->command_recorder.cmd_set_scissors(
                     static_cast<UINT>(pipeline->static_scissors->size()),
                     pipeline->static_scissors->data()
                 );
                 command_buffer->scissors_dirty = false;
             }
             if (pipeline->static_blend_factors) {
-                command_buffer->cmd_set_blend_factor(
+                command_buffer->command_recorder.cmd_set_blend_factor(
                     pipeline->static_blend_factors->factors
                 );
             }
             if (pipeline->static_depth_bounds) {
                 const auto [min, max] = *pipeline->static_depth_bounds;
-                command_buffer->cmd_set_depth_bounds(min, max);
+                command_buffer->command_recorder.cmd_set_depth_bounds(min, max);
             }
             if (pipeline->static_stencil_reference) {
-                command_buffer->cmd_set_stencil_ref(
+                command_buffer->command_recorder.cmd_set_stencil_ref(
                     *pipeline->static_stencil_reference
                 );
             }
@@ -81,12 +81,12 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
                     command_buffer->heap_cbv_srv_uav,
                     command_buffer->heap_sampler
                 };
-                command_buffer->cmd_set_descriptor_heaps(2, &heaps[0]);
+                command_buffer->command_recorder.cmd_set_descriptor_heaps(2, &heaps[0]);
                 command_buffer->active_slot = command_buffer_t::SLOT_COMPUTE;
             }
 
             if (command_buffer->compute_slot.signature != signature) {
-                command_buffer->cmd_set_compute_root_signature(signature);
+                command_buffer->command_recorder.cmd_set_compute_root_signature(signature);
                 command_buffer->compute_slot.signature = signature;
                 // TODO: descriptor sets
             }
@@ -177,7 +177,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdSetBlendConstants(
     TRACE("vkCmdSetBlendConstants");
 
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
-    command_buffer->cmd_set_blend_factor(blendConstants);
+    command_buffer->command_recorder.cmd_set_blend_factor(blendConstants);
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBounds(
@@ -188,7 +188,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBounds(
     TRACE("vkCmdSetDepthBounds");
 
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
-    command_buffer->cmd_set_depth_bounds(minDepthBounds, maxDepthBounds);
+    command_buffer->command_recorder.cmd_set_depth_bounds(minDepthBounds, maxDepthBounds);
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilCompareMask(
@@ -226,7 +226,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilReference(
 
     // PORTABILITY: compareMask must be same for both faces
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
-    command_buffer->cmd_set_stencil_ref(reference);
+    command_buffer->command_recorder.cmd_set_stencil_ref(reference);
 }
 
 VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(
@@ -315,7 +315,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindIndexBuffer(
         case VK_INDEX_TYPE_UINT32: index_format = DXGI_FORMAT_R32_UINT; break;
     }
 
-    command_buffer->cmd_set_index_buffer(
+    command_buffer->command_recorder.cmd_set_index_buffer(
         &D3D12_INDEX_BUFFER_VIEW {
             buffer->resource->GetGPUVirtualAddress() + offset,
             static_cast<UINT>(buffer->memory_requirements.size - offset),
@@ -363,7 +363,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdDraw(
 
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
     command_buffer->bind_graphics_slot(draw_type::DRAW);
-    command_buffer->cmd_draw_instanced(
+    command_buffer->command_recorder.cmd_draw_instanced(
         vertexCount,
         instanceCount,
         firstVertex,
@@ -383,7 +383,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexed(
 
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
     command_buffer->bind_graphics_slot(draw_type::DRAW_INDEXED);
-    command_buffer->cmd_draw_indexed_instanced(
+    command_buffer->command_recorder.cmd_draw_indexed_instanced(
         indexCount,
         instanceCount,
         firstIndex,
@@ -426,7 +426,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndirect(
 
     command_buffer->bind_graphics_slot(draw_type::DRAW);
     const auto signature = get_signature();
-    command_buffer->cmd_execute_indirect(
+    command_buffer->command_recorder.cmd_execute_indirect(
         signature,
         drawCount,
         buffer->resource.Get(),
@@ -470,7 +470,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexedIndirect(
 
     command_buffer->bind_graphics_slot(draw_type::DRAW_INDEXED);
     const auto signature = get_signature();
-    command_buffer->cmd_execute_indirect(
+    command_buffer->command_recorder.cmd_execute_indirect(
         signature,
         drawCount,
         buffer->resource.Get(),
@@ -490,7 +490,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdDispatch(
 
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
     command_buffer->bind_compute_slot();
-    command_buffer->cmd_dispatch(
+    command_buffer->command_recorder.cmd_dispatch(
         groupCountX,
         groupCountY,
         groupCountZ
@@ -521,7 +521,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBuffer(
     auto regions { span<const VkBufferCopy>(pRegions, regionCount) };
 
     for (auto const& region : regions) {
-        command_buffer->cmd_copy_buffer_region(
+        command_buffer->command_recorder.cmd_copy_buffer_region(
             dst_buffer->resource.Get(),
             region.dstOffset,
             src_buffer->resource.Get(),
@@ -588,7 +588,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyImage(
                 region.srcOffset.z + region.extent.depth
             };
 
-            command_buffer->cmd_copy_texture_region(
+            command_buffer->command_recorder.cmd_copy_texture_region(
                 &dst,
                 region.dstOffset.x,
                 region.dstOffset.y,
@@ -650,10 +650,10 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
     const D3D12_CPU_DESCRIPTOR_HANDLE srv_start { start_cpu.ptr };
     const D3D12_CPU_DESCRIPTOR_HANDLE uav_start { start_cpu.ptr + handle_size };
 
-    command_buffer->cmd_set_pipeline_state(command_buffer->_device->pso_blit_2d.Get());
-    command_buffer->cmd_set_compute_root_signature(command_buffer->_device->signature_blit_2d.Get());
+    command_buffer->command_recorder.cmd_set_pipeline_state(command_buffer->_device->pso_blit_2d.Get());
+    command_buffer->command_recorder.cmd_set_compute_root_signature(command_buffer->_device->signature_blit_2d.Get());
     std::array<ID3D12DescriptorHeap *const, 1> heaps { temp_heap.Get() };
-    command_buffer->cmd_set_descriptor_heaps(1, &heaps[0]);
+    command_buffer->command_recorder.cmd_set_descriptor_heaps(1, &heaps[0]);
 
     for (auto i : range(regionCount)) {
         auto const& region { regions[i] };
@@ -701,7 +701,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
         );
 
 
-        command_buffer->cmd_set_compute_root_descriptor_table(
+        command_buffer->command_recorder.cmd_set_compute_root_descriptor_table(
             0,
             D3D12_GPU_DESCRIPTOR_HANDLE { start_gpu.ptr + 2 * i * handle_size }
         );
@@ -724,14 +724,14 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
             height,
             depth,
         };
-        command_buffer->cmd_set_compute_root_constants(
+        command_buffer->command_recorder.cmd_set_compute_root_constants(
             1,
             static_cast<UINT>(constant_data.size()),
             constant_data.data(),
             0
         );
 
-        command_buffer->cmd_dispatch(
+        command_buffer->command_recorder.cmd_dispatch(
             region.dstOffsets[1].x - region.dstOffsets[0].x,
             region.dstOffsets[1].y - region.dstOffsets[0].y,
             region.dstOffsets[1].z - region.dstOffsets[0].z
@@ -741,7 +741,9 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
             CD3DX12_RESOURCE_BARRIER::UAV(src_image->resource.Get()),
             CD3DX12_RESOURCE_BARRIER::UAV(dst_image->resource.Get())
         };
-        command_buffer->cmd_resource_barrier(uav_barriers.size(), uav_barriers.data());
+        command_buffer->command_recorder.cmd_resource_barrier(
+            uav_barriers.size(), uav_barriers.data()
+        );
     }
 }
 
@@ -1097,7 +1099,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                     copy_region.src_desc,
                 };
 
-                command_buffer->cmd_copy_texture_region(
+                command_buffer->command_recorder.cmd_copy_texture_region(
                     &dst_desc,
                     copy_region.dst_x,
                     copy_region.dst_y,
@@ -1136,10 +1138,14 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
     const auto start_cpu = temp_heap->GetCPUDescriptorHandleForHeapStart();
     const auto start_gpu = temp_heap->GetGPUDescriptorHandleForHeapStart();
 
-    command_buffer->cmd_set_pipeline_state(command_buffer->_device->pso_buffer_to_image.Get());
-    command_buffer->cmd_set_compute_root_signature(command_buffer->_device->signature_buffer_to_image.Get());
+    command_buffer->command_recorder.cmd_set_pipeline_state(
+        command_buffer->_device->pso_buffer_to_image.Get()
+    );
+    command_buffer->command_recorder.cmd_set_compute_root_signature(
+        command_buffer->_device->signature_buffer_to_image.Get()
+    );
     std::array<ID3D12DescriptorHeap *const, 1> heaps { temp_heap.Get() };
-    command_buffer->cmd_set_descriptor_heaps(1, &heaps[0]);
+    command_buffer->command_recorder.cmd_set_descriptor_heaps(1, &heaps[0]);
 
     for (auto i : range(cs_regions.size())) {
         auto const& region { cs_regions[i] };
@@ -1154,7 +1160,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
             region.row_pitch,
             region.slice_pitch
         };
-        command_buffer->cmd_set_compute_root_constants(
+        command_buffer->command_recorder.cmd_set_compute_root_constants(
             2,
             static_cast<UINT>(constant_data.size()),
             constant_data.data(),
@@ -1179,13 +1185,15 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
             WARN("vkCmdCopyBufferToImage: unhandled CS slow path copy with bit size {}", region.bits_format);
         }
 
-        command_buffer->cmd_set_compute_root_shader_resource_view(0, src_buffer->resource->GetGPUVirtualAddress());
-        command_buffer->cmd_set_compute_root_descriptor_table(
+        command_buffer->command_recorder.cmd_set_compute_root_shader_resource_view(
+            0, src_buffer->resource->GetGPUVirtualAddress()
+        );
+        command_buffer->command_recorder.cmd_set_compute_root_descriptor_table(
             1,
             D3D12_GPU_DESCRIPTOR_HANDLE { start_gpu.ptr + i * handle_size }
         );
 
-        command_buffer->cmd_dispatch(
+        command_buffer->command_recorder.cmd_dispatch(
             region.extent.width,
             region.extent.height,
             region.extent.depth
@@ -1275,7 +1283,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer(
                 region.imageExtent.depth,
             };
 
-            command_buffer->cmd_copy_texture_region(
+            command_buffer->command_recorder.cmd_copy_texture_region(
                 &dst_desc,
                 region.imageOffset.x,
                 region.imageOffset.y,

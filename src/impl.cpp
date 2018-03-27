@@ -1046,7 +1046,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(
         std::vector<ID3D12CommandList *> command_lists(submit.commandBufferCount, nullptr);
         for (auto i : range(submit.commandBufferCount)) {
             auto command_buffer { reinterpret_cast<command_buffer_t *>(command_buffers[i]) };
-            command_lists[i] = command_buffer->command_list.Get();
+            command_lists[i] = command_buffer->raw_command_list();
         }
 
         (*queue)->ExecuteCommandLists(submit.commandBufferCount, command_lists.data());
@@ -3542,13 +3542,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateCommandBuffers(
     auto const& pool { *reinterpret_cast<command_pool_t *>(info.commandPool) };
 
     for (auto i : range(info.commandBufferCount)) {
-        auto command_buffer {
-            new command_buffer_t(
-                device->descriptors_gpu_cbv_srv_uav.heap(),
-                device->descriptors_gpu_sampler.heap()
-            )
-        };
-
         ID3D12GraphicsCommandList2* command_list { nullptr };
         {
             const auto hr {
@@ -3564,10 +3557,15 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateCommandBuffers(
         }
         command_list->Close();
 
-        command_buffer->allocator = pool.allocator.Get();
-        command_buffer->command_list = command_list;
-        command_buffer->_device = device;
-
+        auto command_buffer {
+            new command_buffer_t(
+                pool.allocator.Get(),
+                command_list,
+                device,
+                device->descriptors_gpu_cbv_srv_uav.heap(),
+                device->descriptors_gpu_sampler.heap()
+            )
+        };
         pCommandBuffers[i] = reinterpret_cast<VkCommandBuffer>(command_buffer);
     }
 
