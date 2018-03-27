@@ -157,6 +157,18 @@ public:
         );
     }
 
+    auto cmd_set_compute_root_constant(
+        UINT RootParameterIndex,
+        UINT SrcData,
+        UINT DestOffsetIn32BitValues
+    ) {
+        this->command_list->SetComputeRoot32BitConstant(
+            RootParameterIndex,
+            SrcData,
+            DestOffsetIn32BitValues
+        );
+    }
+
     auto cmd_set_compute_root_constants(
         UINT RootParameterIndex,
         UINT Num32BitValuesToSet,
@@ -179,6 +191,74 @@ public:
             RootParameterIndex,
             BufferLocation
        );
+    }
+
+    auto cmd_set_graphics_root_constant(
+        UINT RootParameterIndex,
+        UINT SrcData,
+        UINT DestOffsetIn32BitValues
+    ) {
+        this->command_list->SetGraphicsRoot32BitConstant(
+            RootParameterIndex,
+            SrcData,
+            DestOffsetIn32BitValues
+        );
+    }
+
+    auto cmd_set_graphics_root_descriptor_table(
+        UINT                        RootParameterIndex,
+        D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor
+    ) {
+        this->command_list->SetGraphicsRootDescriptorTable(
+            RootParameterIndex,
+            BaseDescriptor
+        );
+    }
+
+    auto cmd_clear_render_target_view(
+        D3D12_CPU_DESCRIPTOR_HANDLE RenderTargetView,
+        const FLOAT                 ColorRGBA[4],
+        UINT                        NumRects,
+        const D3D12_RECT            *pRects
+    ) {
+        this->command_list->ClearRenderTargetView(
+            RenderTargetView,
+            ColorRGBA,
+            NumRects,
+            pRects
+        );
+    }
+
+    auto cmd_clear_depth_stencil_view(
+        D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView,
+        D3D12_CLEAR_FLAGS           ClearFlags,
+        FLOAT                       Depth,
+        UINT8                       Stencil,
+        UINT                        NumRects,
+        const D3D12_RECT            *pRects
+    ) {
+        this->command_list->ClearDepthStencilView(
+            DepthStencilView,
+            ClearFlags,
+            Depth,
+            Stencil,
+            NumRects,
+            pRects
+        );
+    }
+
+    auto cmd_set_render_targets(
+        UINT                                NumRenderTargetDescriptors,
+        const D3D12_CPU_DESCRIPTOR_HANDLE   *pRenderTargetDescriptors,
+        BOOL                                RTsSingleHandleToDescriptorRange,
+        const D3D12_CPU_DESCRIPTOR_HANDLE   *pDepthStencilDescriptor
+    ) {
+        this->command_list->OMSetRenderTargets(
+            NumRenderTargetDescriptors,
+            pRenderTargetDescriptors,
+            RTsSingleHandleToDescriptorRange,
+            pDepthStencilDescriptor
+        );
     }
 
     auto cmd_set_primitive_topolgy(D3D12_PRIMITIVE_TOPOLOGY PrimitiveTopology) {
@@ -314,6 +394,18 @@ public:
         this->command_list->ResourceBarrier(NumBarriers, pBarriers);
     }
 
+    auto cmd_set_vertex_buffers(
+        UINT                     StartSlot,
+        UINT                     NumViews,
+        const D3D12_VERTEX_BUFFER_VIEW *pViews
+    ) {
+        this->command_list->IASetVertexBuffers(
+            StartSlot,
+            NumViews,
+            pViews
+        );
+    }
+
 public:
     auto reset() -> void {
         this->command_list->Reset(this->allocator, nullptr);
@@ -402,7 +494,7 @@ public:
                 this->heap_cbv_srv_uav,
                 this->heap_sampler
             };
-            this->command_list->SetDescriptorHeaps(2, &heaps[0]);
+            cmd_set_descriptor_heaps(2, &heaps[0]);
         }
 
 
@@ -414,7 +506,7 @@ public:
         }
 
         if (!this->active_pipeline) {
-            this->command_list->SetPipelineState(
+            cmd_set_pipeline_state(
                 std::visit(
                     stdx::match(
                         [] (pipeline_t::unique_pso_t& pso) {
@@ -540,7 +632,7 @@ public:
         this->active_slot = SLOT_GRAPHICS;
 
         if (this->viewports_dirty) {
-            this->command_list->RSSetViewports(
+            cmd_set_viewports(
                 this->num_viewports_scissors,
                 this->viewports
             );
@@ -548,7 +640,7 @@ public:
         }
 
         if (this->scissors_dirty) {
-            this->command_list->RSSetScissorRects(
+            cmd_set_scissors(
                 this->num_viewports_scissors,
                 this->scissors
             );
@@ -566,7 +658,7 @@ public:
                         in_range = i;
                     }
                 } else if (in_range) {
-                    this->command_list->IASetVertexBuffers(
+                    cmd_set_vertex_buffers(
                         static_cast<UINT>(*in_range),
                         static_cast<UINT>(i - *in_range),
                         this->vertex_buffer_views
@@ -576,7 +668,7 @@ public:
             }
 
             if (in_range) {
-                this->command_list->IASetVertexBuffers(
+                cmd_set_vertex_buffers(
                     static_cast<UINT>(*in_range),
                     static_cast<UINT>(MAX_VERTEX_BUFFER_SLOTS - *in_range),
                     this->vertex_buffer_views
@@ -587,14 +679,14 @@ public:
         update_user_data(
             this->graphics_slot,
             [&] (UINT slot, uint32_t data, UINT offset) {
-                this->command_list->SetGraphicsRoot32BitConstant(
+                cmd_set_graphics_root_constant(
                     slot,
                     data,
                     offset
                 );
             },
             [&] (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle) {
-                this->command_list->SetGraphicsRootDescriptorTable(
+                cmd_set_graphics_root_descriptor_table(
                     slot,
                     handle
                 );
@@ -608,7 +700,7 @@ public:
                 this->heap_cbv_srv_uav,
                 this->heap_sampler
             };
-            this->command_list->SetDescriptorHeaps(2, &heaps[0]);
+            cmd_set_descriptor_heaps(2, &heaps[0]);
         }
 
         if (this->active_slot != SLOT_COMPUTE) {
@@ -617,7 +709,7 @@ public:
         }
 
         if (!this->active_pipeline) {
-            this->command_list->SetPipelineState(
+            cmd_set_pipeline_state(
                 std::get<pipeline_t::unique_pso_t>(this->compute_slot.pipeline->pso).pipeline.Get()
             );
         }
@@ -625,14 +717,14 @@ public:
         update_user_data(
             this->compute_slot,
             [&] (UINT slot, uint32_t data, UINT offset) {
-                this->command_list->SetComputeRoot32BitConstant(
+                cmd_set_compute_root_constant(
                     slot,
                     data,
                     offset
                 );
             },
             [&] (UINT slot, D3D12_GPU_DESCRIPTOR_HANDLE handle) {
-                this->command_list->SetComputeRootDescriptorTable(
+                cmd_set_compute_root_descriptor_table(
                     slot,
                     handle
                 );
@@ -663,10 +755,10 @@ public:
                 auto view { framebuffer->attachments[color_attachment.attachment] };
                 if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
                     // TODO: temp barriers...
-                    this->command_list->ResourceBarrier(1,
+                    cmd_resource_barrier(1,
                         &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET)
                     );
-                    this->command_list->ClearRenderTargetView(
+                    cmd_clear_render_target_view(
                         std::get<0>(*view->rtv),
                         clear_values[color_attachment.attachment].color.float32,
                         1,
@@ -698,10 +790,10 @@ public:
 
                 if (clear_flags) {
                     // TODO: temp barriers...
-                    this->command_list->ResourceBarrier(1,
+                    cmd_resource_barrier(1,
                         &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE)
                     );
-                    this->command_list->ClearDepthStencilView(
+                    cmd_clear_depth_stencil_view(
                         std::get<0>(*view->dsv),
                         clear_flags,
                         depth,
@@ -729,7 +821,7 @@ public:
             dsv = &std::get<0>(*framebuffer->attachments[depth_attachment]->dsv);
         }
 
-        this->command_list->OMSetRenderTargets(
+        cmd_set_render_targets(
             static_cast<UINT>(num_rtvs),
             render_targets,
             !!dsv,
@@ -757,7 +849,7 @@ public:
                 auto view { framebuffer->attachments[color_attachment.attachment] };
                 if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
                     // TODO: temp barriers...
-                    this->command_list->ResourceBarrier(1,
+                    cmd_resource_barrier(1,
                         &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COMMON)
                     );
                 }
@@ -775,7 +867,7 @@ public:
 
                 if (attachment.desc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
                     // TODO: temp barriers...
-                    this->command_list->ResourceBarrier(1,
+                    cmd_resource_barrier(1,
                         &CD3DX12_RESOURCE_BARRIER::Transition(view->image, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COMMON)
                     );
                 }
