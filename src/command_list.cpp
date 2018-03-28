@@ -1396,7 +1396,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdWaitEvents(
     uint32_t                                    imageMemoryBarrierCount,
     const VkImageMemoryBarrier*                 pImageMemoryBarriers
 ) {
-    TRACE("");
+    TRACE("vkCmdWaitEvents");
     WARN("unimplemented");
 }
 

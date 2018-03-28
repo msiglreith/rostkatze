@@ -450,3 +450,286 @@ public:
 private:
     ID3D12GraphicsCommandList2* command_list;
 };
+
+class command_buffer_recorder_store_t : public command_buffer_recorder_t {
+    enum class command_t {
+        RESOLVE_SUBRESOURCE,
+        SET_DESCRIPTOR_HEAPS,
+        SET_COMPUTE_ROOT_SIGNATURE,
+        SET_COMPUTE_ROOT_DESCRIPTOR_TABLE,
+        SET_COMPUTE_ROOT_CONSTANT,
+        SET_COMPUTE_ROOT_CONSTANTS,
+        SET_COMPUTE_ROOT_SHADER_RESOURCE_VIEW,
+        SET_GRAPHICS_ROOT_SIGNATURE,
+        SET_GRAPHICS_ROOT_CONSTANT,
+        SET_GRAPHICS_ROOT_DESCRIPTOR_TABLE,
+        CLEAR_RENDER_TARGET_VIEW,
+        CLEAR_DEPTH_STENCIL_VIEW,
+        SET_RENDER_TARGET,
+        SET_PRIMITIVE_TOPOLOGY,
+        SET_SCISSORS,
+        SET_VIEWPORTS,
+        SET_BLEND_FACTOR,
+        SET_STENCIL_REF,
+        SET_DEPTH_BOUNDS,
+        SET_INDEX_BUFFER,
+        COPY_BUFFER_REGION,
+        COPY_TEXTURE_REGION,
+        SET_PIPELINE_STATE,
+        DISPATCH,
+        DRAW_INSTANCED,
+        DRAW_INDEXED_INSTANCED,
+        EXECUTE_INDIRECT,
+        RESOURCE_BARRIER,
+        SET_VERTEX_BUFFERS,
+    };
+
+    struct dispatch_t {
+        UINT ThreadGroupCountX;
+        UINT ThreadGroupCountY;
+        UINT ThreadGroupCountZ;
+    };
+
+    struct draw_instanced_t {
+        UINT VertexCountPerInstance;
+        UINT InstanceCount;
+        UINT StartVertexLocation;
+        UINT StartInstanceLocation;
+    };
+
+public:
+    virtual auto resolve_subresource(
+        ID3D12Resource *pDstResource,
+        UINT           DstSubresource,
+        ID3D12Resource *pSrcResource,
+        UINT           SrcSubresource,
+        DXGI_FORMAT    Format
+    ) -> void {
+        this->commands.push_back(command_t::RESOLVE_SUBRESOURCE);
+    }
+
+    virtual auto cmd_set_descriptor_heaps(
+        UINT                        NumDescriptorHeaps,
+        ID3D12DescriptorHeap *const *ppDescriptorHeaps
+    ) -> void {
+        this->commands.push_back(command_t::SET_DESCRIPTOR_HEAPS);
+    }
+
+    virtual auto cmd_set_compute_root_signature(ID3D12RootSignature *pRootSignature) -> void {
+        this->commands.push_back(command_t::SET_COMPUTE_ROOT_SIGNATURE);
+    }
+
+    virtual auto cmd_set_graphics_root_signature(ID3D12RootSignature *pRootSignature) -> void {
+        this->commands.push_back(command_t::SET_GRAPHICS_ROOT_SIGNATURE);
+    }
+
+    virtual auto cmd_set_compute_root_descriptor_table(
+        UINT                        RootParameterIndex,
+        D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor
+    ) -> void {
+        this->commands.push_back(command_t::SET_COMPUTE_ROOT_DESCRIPTOR_TABLE);
+    }
+
+    virtual auto cmd_set_compute_root_constant(
+        UINT RootParameterIndex,
+        UINT SrcData,
+        UINT DestOffsetIn32BitValues
+    ) -> void {
+        this->commands.push_back(command_t::SET_COMPUTE_ROOT_CONSTANT);
+    }
+
+    virtual auto cmd_set_compute_root_constants(
+        UINT RootParameterIndex,
+        UINT Num32BitValuesToSet,
+        const void *pSrcData,
+        UINT DestOffsetIn32BitValues
+    ) -> void {
+        this->commands.push_back(command_t::SET_COMPUTE_ROOT_CONSTANTS);
+    }
+
+    virtual auto cmd_set_compute_root_shader_resource_view(
+        UINT                      RootParameterIndex,
+        D3D12_GPU_VIRTUAL_ADDRESS BufferLocation
+    ) -> void {
+        this->commands.push_back(command_t::SET_COMPUTE_ROOT_SHADER_RESOURCE_VIEW);
+    }
+
+    virtual auto cmd_set_graphics_root_constant(
+        UINT RootParameterIndex,
+        UINT SrcData,
+        UINT DestOffsetIn32BitValues
+    ) -> void {
+        this->commands.push_back(command_t::SET_GRAPHICS_ROOT_CONSTANT);
+    }
+
+    virtual auto cmd_set_graphics_root_descriptor_table(
+        UINT                        RootParameterIndex,
+        D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor
+    ) -> void {
+        this->commands.push_back(command_t::SET_GRAPHICS_ROOT_DESCRIPTOR_TABLE);
+    }
+
+    virtual auto cmd_clear_render_target_view(
+        D3D12_CPU_DESCRIPTOR_HANDLE RenderTargetView,
+        const FLOAT                 ColorRGBA[4],
+        UINT                        NumRects,
+        const D3D12_RECT            *pRects
+    ) -> void {
+        this->commands.push_back(command_t::CLEAR_RENDER_TARGET_VIEW);
+    }
+
+    virtual auto cmd_clear_depth_stencil_view(
+        D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView,
+        D3D12_CLEAR_FLAGS           ClearFlags,
+        FLOAT                       Depth,
+        UINT8                       Stencil,
+        UINT                        NumRects,
+        const D3D12_RECT            *pRects
+    ) -> void {
+        this->commands.push_back(command_t::CLEAR_DEPTH_STENCIL_VIEW);
+    }
+
+    virtual auto cmd_set_render_targets(
+        UINT                                NumRenderTargetDescriptors,
+        const D3D12_CPU_DESCRIPTOR_HANDLE   *pRenderTargetDescriptors,
+        BOOL                                RTsSingleHandleToDescriptorRange,
+        const D3D12_CPU_DESCRIPTOR_HANDLE   *pDepthStencilDescriptor
+    ) -> void {
+        this->commands.push_back(command_t::SET_RENDER_TARGET);
+    }
+
+    virtual auto cmd_set_primitive_topolgy(D3D12_PRIMITIVE_TOPOLOGY PrimitiveTopology) -> void {
+        this->commands.push_back(command_t::SET_PRIMITIVE_TOPOLOGY);
+    }
+
+    virtual auto cmd_set_scissors(UINT NumRects, const D3D12_RECT *pRects) -> void {
+        this->commands.push_back(command_t::SET_SCISSORS);
+    }
+
+    virtual auto cmd_set_viewports(UINT NumViewports, const D3D12_VIEWPORT *pViewports) -> void {
+        this->commands.push_back(command_t::SET_VIEWPORTS);
+    }
+
+    virtual auto cmd_set_blend_factor(const FLOAT BlendFactor[4]) -> void {
+        this->commands.push_back(command_t::SET_BLEND_FACTOR);
+    }
+
+    virtual auto cmd_set_stencil_ref(UINT StencilRef) -> void {
+        this->commands.push_back(command_t::SET_STENCIL_REF);
+    }
+
+    virtual auto cmd_set_depth_bounds(FLOAT Min, FLOAT Max) -> void {
+        this->commands.push_back(command_t::SET_DEPTH_BOUNDS);
+    }
+
+    virtual auto cmd_set_index_buffer(const D3D12_INDEX_BUFFER_VIEW *pView) -> void {
+        this->commands.push_back(command_t::SET_INDEX_BUFFER);
+    }
+
+    virtual auto cmd_copy_buffer_region(
+        ID3D12Resource *pDstBuffer,
+        UINT64         DstOffset,
+        ID3D12Resource *pSrcBuffer,
+        UINT64         SrcOffset,
+        UINT64         NumBytes
+    ) -> void {
+        this->commands.push_back(command_t::COPY_BUFFER_REGION);
+    }
+
+    virtual auto cmd_copy_texture_region(
+        const D3D12_TEXTURE_COPY_LOCATION *pDst,
+        UINT                        DstX,
+        UINT                        DstY,
+        UINT                        DstZ,
+        const D3D12_TEXTURE_COPY_LOCATION *pSrc,
+        const D3D12_BOX                   *pSrcBox
+    ) -> void {
+        this->commands.push_back(command_t::COPY_TEXTURE_REGION);
+    }
+
+    virtual auto cmd_set_pipeline_state(ID3D12PipelineState *pPipelineState) -> void {
+        this->commands.push_back(command_t::SET_PIPELINE_STATE);
+    }
+
+    virtual auto cmd_dispatch(
+        UINT ThreadGroupCountX,
+        UINT ThreadGroupCountY,
+        UINT ThreadGroupCountZ
+    ) -> void {
+        encode(
+            command_t::DISPATCH,
+            dispatch_t {
+                ThreadGroupCountX,
+                ThreadGroupCountY,
+                ThreadGroupCountZ,
+            }
+        );
+    }
+
+    virtual auto cmd_draw_instanced(
+        UINT VertexCountPerInstance,
+        UINT InstanceCount,
+        UINT StartVertexLocation,
+        UINT StartInstanceLocation
+    ) -> void {
+        encode(
+            command_t::DRAW_INSTANCED,
+            draw_instanced_t {
+                VertexCountPerInstance,
+                InstanceCount,
+                StartVertexLocation,
+                StartInstanceLocation,
+            }
+        );
+    }
+
+    virtual auto cmd_draw_indexed_instanced(
+        UINT IndexCountPerInstance,
+        UINT InstanceCount,
+        UINT StartIndexLocation,
+        INT  BaseVertexLocation,
+        UINT StartInstanceLocation
+    ) -> void {
+        this->commands.push_back(command_t::DRAW_INDEXED_INSTANCED);
+    }
+
+    virtual auto cmd_execute_indirect(
+        ID3D12CommandSignature *pCommandSignature,
+        UINT                   MaxCommandCount,
+        ID3D12Resource         *pArgumentBuffer,
+        UINT64                 ArgumentBufferOffset,
+        ID3D12Resource         *pCountBuffer,
+        UINT64                 CountBufferOffset
+    ) -> void {
+        this->commands.push_back(command_t::EXECUTE_INDIRECT);
+    }
+
+    virtual auto cmd_resource_barrier(
+        UINT                   NumBarriers,
+        const D3D12_RESOURCE_BARRIER *pBarriers
+    ) -> void {
+        this->commands.push_back(command_t::RESOURCE_BARRIER);
+    }
+
+    virtual auto cmd_set_vertex_buffers(
+        UINT                     StartSlot,
+        UINT                     NumViews,
+        const D3D12_VERTEX_BUFFER_VIEW *pViews
+    ) -> void {
+        this->commands.push_back(command_t::SET_VERTEX_BUFFERS);
+    }
+
+private:
+    template<typename T>
+    auto encode(command_t cmd, T cmd_data) {
+        this->commands.push_back(cmd);
+        auto const raw_data { reinterpret_cast<uint8_t *>(&cmd_data) };
+        for (auto i : range(sizeof(T))) {
+            this->data.push_back(raw_data[i]);
+        }
+    }
+
+private:
+    std::vector<command_t> commands;
+    std::vector<uint8_t> data;
+};
