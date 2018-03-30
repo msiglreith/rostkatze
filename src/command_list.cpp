@@ -782,6 +782,14 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
     };
     std::vector<cs_copy_region> cs_regions {};
 
+    struct copy_region_t {
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT src_desc;
+        UINT dst_x;
+        UINT dst_y;
+        UINT dst_z;
+        D3D12_BOX box;
+    };
+
     for (auto const& region : regions) {
         const auto level { region.imageSubresource.mipLevel };
         const auto width { std::max(static_cast<UINT>(img_width >> level), static_cast<UINT>(1u)) };
@@ -799,8 +807,11 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                 region.bufferImageHeight ? region.bufferImageHeight : region.imageExtent.height
             };
 
+            const auto image_offset_x { static_cast<UINT>(region.imageOffset.x) };
+            const auto image_offset_y { static_cast<UINT>(region.imageOffset.y) };
+            const auto image_offset_z { static_cast<UINT>(region.imageOffset.z) };
+
             // Aligning, in particular required for the case of block compressed formats and non-multiple width/height fields.
-            // TODO: verify the align parts, not totally confident it's correct in all circumstances
             const auto byte_per_texel { dst_image->block_data.bits / 8 };
             const auto num_rows { up_align(buffer_height, dst_image->block_data.height) / dst_image->block_data.height };
             const auto raw_row_pitch {
@@ -808,22 +819,10 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
             };
             const auto raw_slice_pitch { raw_row_pitch * num_rows };
             const auto offset { region.bufferOffset + (layer - base_layer) * raw_slice_pitch * depth };
+            const auto pitch_aligned { (raw_row_pitch & (D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1)) == 0 };
+            const auto offset_aligned { (offset & (D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1)) == 0 };
 
-            const auto pitch_aligned {
-                (raw_row_pitch & (D3D12_TEXTURE_DATA_PITCH_ALIGNMENT-1)) == 0
-            };
-            const auto offset_aligned {
-                (offset & (D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT-1)) == 0
-            };
-
-            struct copy_region_t {
-                D3D12_PLACED_SUBRESOURCE_FOOTPRINT src_desc;
-                UINT dst_x;
-                UINT dst_y;
-                UINT dst_z;
-                D3D12_BOX box;
-            };
-
+            // Store splitted copy segments
             std::vector<copy_region_t> new_regions;
 
             if ((pitch_aligned || num_rows == 1)) {
@@ -847,7 +846,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                     new_regions.emplace_back(
                         copy_region_t {
                             src_desc,
-                            static_cast<UINT>(region.imageOffset.x),
+                            image_offset_x,
                             static_cast<UINT>(region.imageOffset.y),
                             static_cast<UINT>(region.imageOffset.z),
                             D3D12_BOX {
@@ -866,14 +865,20 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                     // Texture splitting algorithm from NXT, adopted to coding style
                     // LICENSE in the header
                     auto calc_texel_offsets = [] (
-                        uint32_t offset, uint32_t row_pitch, uint32_t slice_pitch, uint32_t texel_size,
-                        uint32_t& texel_offset_x, uint32_t& texel_offset_y, uint32_t& texel_offset_z,
+                        uint32_t offset,
+                        uint32_t row_pitch,
+                        uint32_t slice_pitch,
+                        uint32_t texel_size,
+                        uint32_t& texel_offset_x,
+                        uint32_t& texel_offset_y,
+                        uint32_t& texel_offset_z,
                         uint32_t block_width, uint32_t block_height
                     ) {
                         const uint32_t byte_offset_x = offset % row_pitch;
                         offset -= byte_offset_x;
                         const uint32_t byte_offset_y = offset % slice_pitch;
-                        const uint32_t byte_offset_z = offset - byte_offset_y;
+                        offset -= byte_offset_y;
+                        const uint32_t byte_offset_z = offset;
 
                         texel_offset_x = (byte_offset_x / texel_size) * block_width;
                         texel_offset_y = (byte_offset_y / row_pitch ) * block_height;
@@ -909,9 +914,9 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                         new_regions.emplace_back(
                             copy_region_t {
                                 src_desc,
-                                static_cast<UINT>(region.imageOffset.x),
-                                static_cast<UINT>(region.imageOffset.y),
-                                static_cast<UINT>(region.imageOffset.z),
+                                image_offset_x,
+                                image_offset_y,
+                                image_offset_z,
                                 D3D12_BOX {
                                     texel_offset_x,
                                     texel_offset_y,
@@ -938,9 +943,9 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                             new_regions.emplace_back(
                                 copy_region_t {
                                     src_desc,
-                                    static_cast<UINT>(region.imageOffset.x),
-                                    static_cast<UINT>(region.imageOffset.y),
-                                    static_cast<UINT>(region.imageOffset.z),
+                                    image_offset_x,
+                                    image_offset_y,
+                                    image_offset_z,
                                     D3D12_BOX {
                                         texel_offset_x,
                                         texel_offset_y,
@@ -967,9 +972,9 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                             new_regions.emplace_back(
                                 copy_region_t {
                                     src_desc,
-                                    static_cast<UINT>(region.imageOffset.x + row_pitch_texels - texel_offset_x),
-                                    static_cast<UINT>(region.imageOffset.y),
-                                    static_cast<UINT>(region.imageOffset.z),
+                                    image_offset_x + row_pitch_texels - texel_offset_x,
+                                    image_offset_y,
+                                    image_offset_z,
                                     D3D12_BOX {
                                         0,
                                         texel_offset_y + dst_image->block_data.height,
@@ -982,13 +987,13 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                             );
                         }
                     }
-                    // End texture splitting
+                    // End texture splitting by NXT
                 }
-            } else if (false) { // TODO: check if the format supports UAV
+            } else if (false) {
+                // TODO: check if the format supports UAV
                 // yay! compute shaders.... why???
                 // We will *never* hit this part on a copy queue except someone violates our
                 // exposed image granularity requirements
-
                 cs_regions.emplace_back(
                     cs_copy_region {
                         static_cast<UINT>(offset),
@@ -1003,7 +1008,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
             } else {
                 // Ultra-slow path, where we can't even use compute shaders..
                 // Manually stitching the texture together with one copy per buffer line
-                // TODO: 3d textures heh
+                // TODO: 3d textures
                 const auto aligned_offset {
                     static_cast<UINT>(offset) & ~(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1u)
                 };
@@ -1041,9 +1046,9 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                     new_regions.emplace_back(
                         copy_region_t {
                             src_desc,
-                            static_cast<UINT>(region.imageOffset.x),
-                            static_cast<UINT>(region.imageOffset.y) + y * dst_image->block_data.height,
-                            static_cast<UINT>(region.imageOffset.z),
+                            image_offset_x,
+                            image_offset_y + y * dst_image->block_data.height,
+                            image_offset_z,
                             D3D12_BOX {
                                 buffer_texels,
                                 offset_y * dst_image->block_data.height,
@@ -1060,9 +1065,9 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                         new_regions.emplace_back(
                             copy_region_t {
                                 src_desc,
-                                static_cast<UINT>(region.imageOffset.x) + buffer_width - buffer_texels,
-                                static_cast<UINT>(region.imageOffset.y) + y * dst_image->block_data.height,
-                                static_cast<UINT>(region.imageOffset.z),
+                                image_offset_x + buffer_width - buffer_texels,
+                                image_offset_y + y * dst_image->block_data.height,
+                                image_offset_z,
                                 D3D12_BOX {
                                     0,
                                     (offset_y + 1) * dst_image->block_data.height,
@@ -1075,9 +1080,9 @@ VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(
                         );
                     }
                 }
-
             };
 
+            // Submit copy commands
             const D3D12_TEXTURE_COPY_LOCATION dst_desc {
                 dst_image->resource.Get(),
                 D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,

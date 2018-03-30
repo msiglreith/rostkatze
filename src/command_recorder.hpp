@@ -484,6 +484,42 @@ class command_buffer_recorder_store_t : public command_buffer_recorder_t {
         SET_VERTEX_BUFFERS,
     };
 
+    struct resolve_subresource_t {
+        ID3D12Resource *pDstResource;
+        UINT           DstSubresource;
+        ID3D12Resource *pSrcResource;
+        UINT           SrcSubresource;
+        DXGI_FORMAT    Format;
+    };
+
+    struct set_descriptor_heaps_t {
+        UINT NumDescriptorHeaps;
+        ID3D12DescriptorHeap *const DescriptorHeaps[2]; // Max 2 Heaps atm
+    };
+
+    struct set_compute_root_signature_t {
+        ID3D12RootSignature *pRootSignature;
+    };
+
+    struct set_graphics_root_signature_t {
+        ID3D12RootSignature *pRootSignature;
+    };
+
+    struct set_compute_root_descriptor_table_t {
+        UINT                        RootParameterIndex;
+        D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor;
+    };
+
+    struct set_compute_root_constant_t {
+        UINT RootParameterIndex;
+        UINT SrcData;
+        UINT DestOffsetIn32BitValues;
+    };
+
+    struct set_pipeline_state_t {
+        ID3D12PipelineState *state;
+    };
+
     struct dispatch_t {
         UINT ThreadGroupCountX;
         UINT ThreadGroupCountY;
@@ -494,6 +530,14 @@ class command_buffer_recorder_store_t : public command_buffer_recorder_t {
         UINT VertexCountPerInstance;
         UINT InstanceCount;
         UINT StartVertexLocation;
+        UINT StartInstanceLocation;
+    };
+
+    struct draw_indexed_instanced_t {
+        UINT IndexCountPerInstance;
+        UINT InstanceCount;
+        UINT StartIndexLocation;
+        INT  BaseVertexLocation;
         UINT StartInstanceLocation;
     };
 
@@ -648,7 +692,10 @@ public:
     }
 
     virtual auto cmd_set_pipeline_state(ID3D12PipelineState *pPipelineState) -> void {
-        this->commands.push_back(command_t::SET_PIPELINE_STATE);
+        encode(
+            command_t::SET_PIPELINE_STATE,
+            set_pipeline_state_t { pPipelineState }
+        );
     }
 
     virtual auto cmd_dispatch(
@@ -690,7 +737,16 @@ public:
         INT  BaseVertexLocation,
         UINT StartInstanceLocation
     ) -> void {
-        this->commands.push_back(command_t::DRAW_INDEXED_INSTANCED);
+        encode(
+            command_t::DRAW_INDEXED_INSTANCED,
+            draw_indexed_instanced_t {
+                IndexCountPerInstance,
+                InstanceCount,
+                StartIndexLocation,
+                BaseVertexLocation,
+                StartInstanceLocation,
+            }
+        );
     }
 
     virtual auto cmd_execute_indirect(
