@@ -494,7 +494,7 @@ class command_buffer_recorder_store_t : public command_buffer_recorder_t {
 
     struct set_descriptor_heaps_t {
         UINT NumDescriptorHeaps;
-        ID3D12DescriptorHeap *const DescriptorHeaps[2]; // Max 2 Heaps atm
+        ID3D12DescriptorHeap const* DescriptorHeaps[2]; // Max 2 Heaps atm
     };
 
     struct set_compute_root_signature_t {
@@ -510,14 +510,43 @@ class command_buffer_recorder_store_t : public command_buffer_recorder_t {
         D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor;
     };
 
+    struct set_graphics_root_descriptor_table_t {
+        UINT                        RootParameterIndex;
+        D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor;
+    };
+
     struct set_compute_root_constant_t {
         UINT RootParameterIndex;
         UINT SrcData;
         UINT DestOffsetIn32BitValues;
     };
 
+    struct set_graphics_root_constant_t {
+        UINT RootParameterIndex;
+        UINT SrcData;
+        UINT DestOffsetIn32BitValues;
+    };
+
+    struct set_compute_root_shader_resource_view_t {
+        UINT                      RootParameterIndex;
+        D3D12_GPU_VIRTUAL_ADDRESS BufferLocation;
+    };
+
     struct set_pipeline_state_t {
         ID3D12PipelineState *state;
+    };
+
+    struct set_primitive_topology_t {
+        D3D12_PRIMITIVE_TOPOLOGY PrimitiveTopology;
+    };
+
+    struct set_stencil_ref_t {
+        UINT StencilRef;
+    };
+
+    struct set_depth_bounds_t {
+        FLOAT Min;
+        FLOAT Max;
     };
 
     struct dispatch_t {
@@ -541,6 +570,15 @@ class command_buffer_recorder_store_t : public command_buffer_recorder_t {
         UINT StartInstanceLocation;
     };
 
+    struct execute_indirect_t {
+        ID3D12CommandSignature *pCommandSignature;
+        UINT                   MaxCommandCount;
+        ID3D12Resource         *pArgumentBuffer;
+        UINT64                 ArgumentBufferOffset;
+        ID3D12Resource         *pCountBuffer;
+        UINT64                 CountBufferOffset;
+    };
+
 public:
     virtual auto resolve_subresource(
         ID3D12Resource *pDstResource,
@@ -549,29 +587,48 @@ public:
         UINT           SrcSubresource,
         DXGI_FORMAT    Format
     ) -> void {
-        this->commands.push_back(command_t::RESOLVE_SUBRESOURCE);
+        encode(
+            command_t::RESOLVE_SUBRESOURCE,
+            resolve_subresource_t {
+                pDstResource,
+                DstSubresource,
+                pSrcResource,
+                SrcSubresource,
+                Format,
+            }
+        );
     }
 
     virtual auto cmd_set_descriptor_heaps(
         UINT                        NumDescriptorHeaps,
         ID3D12DescriptorHeap *const *ppDescriptorHeaps
     ) -> void {
-        this->commands.push_back(command_t::SET_DESCRIPTOR_HEAPS);
+        set_descriptor_heaps_t cmd_data { NumDescriptorHeaps };
+        for (auto i : range(NumDescriptorHeaps)) {
+            cmd_data.DescriptorHeaps[i] = ppDescriptorHeaps[i];
+        }
+        encode(command_t::SET_DESCRIPTOR_HEAPS, cmd_data);
     }
 
     virtual auto cmd_set_compute_root_signature(ID3D12RootSignature *pRootSignature) -> void {
-        this->commands.push_back(command_t::SET_COMPUTE_ROOT_SIGNATURE);
+        encode(command_t::SET_COMPUTE_ROOT_SIGNATURE, set_compute_root_signature_t { pRootSignature });
     }
 
     virtual auto cmd_set_graphics_root_signature(ID3D12RootSignature *pRootSignature) -> void {
-        this->commands.push_back(command_t::SET_GRAPHICS_ROOT_SIGNATURE);
+        encode(command_t::SET_GRAPHICS_ROOT_SIGNATURE, set_graphics_root_signature_t { pRootSignature });
     }
 
     virtual auto cmd_set_compute_root_descriptor_table(
         UINT                        RootParameterIndex,
         D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor
     ) -> void {
-        this->commands.push_back(command_t::SET_COMPUTE_ROOT_DESCRIPTOR_TABLE);
+        encode(
+            command_t::SET_COMPUTE_ROOT_DESCRIPTOR_TABLE,
+            set_compute_root_descriptor_table_t {
+                RootParameterIndex,
+                BaseDescriptor,
+            }
+        );
     }
 
     virtual auto cmd_set_compute_root_constant(
@@ -579,7 +636,14 @@ public:
         UINT SrcData,
         UINT DestOffsetIn32BitValues
     ) -> void {
-        this->commands.push_back(command_t::SET_COMPUTE_ROOT_CONSTANT);
+        encode(
+            command_t::SET_COMPUTE_ROOT_CONSTANT,
+            set_compute_root_constant_t {
+                RootParameterIndex,
+                SrcData,
+                DestOffsetIn32BitValues,
+            }
+        );
     }
 
     virtual auto cmd_set_compute_root_constants(
@@ -595,7 +659,13 @@ public:
         UINT                      RootParameterIndex,
         D3D12_GPU_VIRTUAL_ADDRESS BufferLocation
     ) -> void {
-        this->commands.push_back(command_t::SET_COMPUTE_ROOT_SHADER_RESOURCE_VIEW);
+        encode(
+            command_t::SET_COMPUTE_ROOT_SHADER_RESOURCE_VIEW,
+            set_compute_root_shader_resource_view_t {
+                RootParameterIndex,
+                BufferLocation,
+            }
+        );
     }
 
     virtual auto cmd_set_graphics_root_constant(
@@ -603,14 +673,27 @@ public:
         UINT SrcData,
         UINT DestOffsetIn32BitValues
     ) -> void {
-        this->commands.push_back(command_t::SET_GRAPHICS_ROOT_CONSTANT);
+        encode(
+            command_t::SET_GRAPHICS_ROOT_CONSTANT,
+            set_graphics_root_constant_t {
+                RootParameterIndex,
+                SrcData,
+                DestOffsetIn32BitValues,
+            }
+        );
     }
 
     virtual auto cmd_set_graphics_root_descriptor_table(
         UINT                        RootParameterIndex,
         D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor
     ) -> void {
-        this->commands.push_back(command_t::SET_GRAPHICS_ROOT_DESCRIPTOR_TABLE);
+        encode(
+            command_t::SET_GRAPHICS_ROOT_DESCRIPTOR_TABLE,
+            set_graphics_root_descriptor_table_t {
+                RootParameterIndex,
+                BaseDescriptor,
+            }
+        );
     }
 
     virtual auto cmd_clear_render_target_view(
@@ -643,7 +726,10 @@ public:
     }
 
     virtual auto cmd_set_primitive_topolgy(D3D12_PRIMITIVE_TOPOLOGY PrimitiveTopology) -> void {
-        this->commands.push_back(command_t::SET_PRIMITIVE_TOPOLOGY);
+        encode(
+            command_t::SET_PRIMITIVE_TOPOLOGY,
+            set_primitive_topology_t { PrimitiveTopology }
+        );
     }
 
     virtual auto cmd_set_scissors(UINT NumRects, const D3D12_RECT *pRects) -> void {
@@ -659,11 +745,17 @@ public:
     }
 
     virtual auto cmd_set_stencil_ref(UINT StencilRef) -> void {
-        this->commands.push_back(command_t::SET_STENCIL_REF);
+        encode(
+            command_t::SET_STENCIL_REF,
+            set_stencil_ref_t { StencilRef }
+        );
     }
 
     virtual auto cmd_set_depth_bounds(FLOAT Min, FLOAT Max) -> void {
-        this->commands.push_back(command_t::SET_DEPTH_BOUNDS);
+        encode(
+            command_t::SET_DEPTH_BOUNDS,
+            set_depth_bounds_t { Min, Max }
+        );
     }
 
     virtual auto cmd_set_index_buffer(const D3D12_INDEX_BUFFER_VIEW *pView) -> void {
@@ -757,7 +849,17 @@ public:
         ID3D12Resource         *pCountBuffer,
         UINT64                 CountBufferOffset
     ) -> void {
-        this->commands.push_back(command_t::EXECUTE_INDIRECT);
+        encode(
+            command_t::EXECUTE_INDIRECT,
+            execute_indirect_t {
+                pCommandSignature,
+                MaxCommandCount,
+                pArgumentBuffer,
+                ArgumentBufferOffset,
+                pCountBuffer,
+                CountBufferOffset,
+            }
+        );
     }
 
     virtual auto cmd_resource_barrier(
@@ -765,6 +867,7 @@ public:
         const D3D12_RESOURCE_BARRIER *pBarriers
     ) -> void {
         this->commands.push_back(command_t::RESOURCE_BARRIER);
+        // TODO
     }
 
     virtual auto cmd_set_vertex_buffers(
@@ -773,13 +876,23 @@ public:
         const D3D12_VERTEX_BUFFER_VIEW *pViews
     ) -> void {
         this->commands.push_back(command_t::SET_VERTEX_BUFFERS);
+        encode_raw(StartSlot);
+        encode_raw(NumViews);
+        for (auto i : range(NumViews)) {
+            encode_raw(pViews[i]);
+        }
     }
 
 private:
     template<typename T>
     auto encode(command_t cmd, T cmd_data) {
         this->commands.push_back(cmd);
-        auto const raw_data { reinterpret_cast<uint8_t *>(&cmd_data) };
+        encode_raw(cmd_data);
+    }
+
+    template<typename T>
+    auto encode_raw(T data) {
+        auto const raw_data { reinterpret_cast<uint8_t *>(&data) };
         for (auto i : range(sizeof(T))) {
             this->data.push_back(raw_data[i]);
         }

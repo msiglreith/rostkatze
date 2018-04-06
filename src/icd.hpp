@@ -22,7 +22,7 @@ static auto init_logging() {
     initialized = true;
     // spdlog::basic_logger_mt("rostkatze", "test.log");
     spdlog::create<spdlog::sinks::msvc_sink_mt>("rostkatze");
-    spdlog::set_level(spdlog::level::debug);
+    spdlog::set_level(spdlog::level::trace);
 }
 
 static auto log() {

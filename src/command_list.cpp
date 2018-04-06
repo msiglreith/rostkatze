@@ -345,7 +345,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindVertexBuffers(
         const auto address { buffer->resource->GetGPUVirtualAddress() };
 
         command_buffer->vertex_buffer_views[i].BufferLocation = address + offset;
-        command_buffer->vertex_buffer_views[i].SizeInBytes = buffer->memory_requirements.size - offset;
+        command_buffer->vertex_buffer_views[i].SizeInBytes = static_cast<UINT>(buffer->memory_requirements.size - offset);
         // stride information inside the graphics pipeline
 
         command_buffer->vertex_buffer_views_dirty.set(i);
@@ -742,7 +742,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage(
             CD3DX12_RESOURCE_BARRIER::UAV(dst_image->resource.Get())
         };
         command_buffer->command_recorder.cmd_resource_barrier(
-            uav_barriers.size(), uav_barriers.data()
+            static_cast<UINT>(uav_barriers.size()),
+            uav_barriers.data()
         );
     }
 }
