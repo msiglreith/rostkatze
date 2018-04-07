@@ -571,7 +571,10 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(
     auto physical_device { reinterpret_cast<physical_device_t *>(_physicalDevice) };
 
     auto const& info { *pCreateInfo };
-    span<const VkDeviceQueueCreateInfo> queue_infos { info.pQueueCreateInfos, info.queueCreateInfoCount };
+    span<const VkDeviceQueueCreateInfo> queue_infos {
+        info.pQueueCreateInfos,
+        static_cast<int32_t>(info.queueCreateInfoCount),
+    };
 
     // Create device
     ComPtr<ID3D12Device3> raw_device;
