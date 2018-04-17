@@ -2797,16 +2797,15 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSampler(
     }
 
     auto filter {
-        D3D12_ENCODE_BASIC_FILTER(
-            base_filter(info.minFilter),
-            base_filter(info.magFilter),
-            mip_filter(info.mipmapMode),
-            reduction
-        )
+        info.anisotropyEnable ?
+            D3D12_ENCODE_ANISOTROPIC_FILTER(reduction) :
+            D3D12_ENCODE_BASIC_FILTER(
+                base_filter(info.minFilter),
+                base_filter(info.magFilter),
+                mip_filter(info.mipmapMode),
+                reduction
+            )
     };
-    if (info.anisotropyEnable) {
-        filter = static_cast<D3D12_FILTER>(filter | D3D12_ANISOTROPIC_FILTERING_BIT);
-    }
 
     D3D12_SAMPLER_DESC desc {
         filter,
