@@ -445,17 +445,21 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceImageFormatProperties(
 ) {
     WARN("vkGetPhysicalDeviceImageFormatProperties unimplemented");
 
-    // TODO
+    // TODO: take other parts into account
+    static constexpr VkDeviceSize max_resource_size =
+        D3D12_REQ_RESOURCE_SIZE_IN_MEGABYTES_EXPRESSION_A_TERM << 20;
+
+    // TODO: VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     *pImageFormatProperties = VkImageFormatProperties {
         VkExtent3D {
             D3D12_REQ_TEXTURE1D_U_DIMENSION,
             D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION,
             D3D12_REQ_TEXTURE3D_U_V_OR_W_DIMENSION,
         },
+        D3D12_REQ_MIP_LEVELS,
         1,
-        1,
-        VK_SAMPLE_COUNT_1_BIT,
-        1,
+        VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT,
+        max_resource_size,
     };
 
     return VK_SUCCESS;
@@ -1682,6 +1686,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(
     }
 
     const auto format { formats[info.format] };
+    if (format == DXGI_FORMAT_UNKNOWN) {
+        ERR("Unsupported image format {}", info.format);
+    }
 
     auto flags { D3D12_RESOURCE_FLAG_NONE };
     if (info.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) {
@@ -2908,7 +2915,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorPool(
     pool->slice_cbv_srv_uav.start = device->descriptors_gpu_cbv_srv_uav.alloc(num_cbv_srv_uav);
     pool->slice_cbv_srv_uav.handle_size = device->descriptors_gpu_cbv_srv_uav.handle_size();
 
-    pool->slice_sampler.start = device->descriptors_gpu_sampler.alloc(num_sampler);
+    pool->slice_sampler.start = std::make_tuple(device->descriptors_gpu_sampler.alloc(num_sampler), D3D12_GPU_DESCRIPTOR_HANDLE { 0 });
     pool->slice_sampler.handle_size = device->descriptors_gpu_sampler.handle_size();
 
     *pDescriptorPool = reinterpret_cast<VkDescriptorPool>(pool);
@@ -2946,15 +2953,15 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(
     auto layouts { span<const VkDescriptorSetLayout>(info.pSetLayouts, info.descriptorSetCount) };
 
     const auto handle_size_cbv_srv_uav { device->descriptors_gpu_cbv_srv_uav.handle_size() };
-    const auto handle_size_sampler { device->descriptors_gpu_sampler.handle_size() };
+    const auto handle_size_sampler_cpu { device->descriptors_gpu_sampler.handle_size() };
 
     for (auto i : range(info.descriptorSetCount)) {
         auto layout { reinterpret_cast<descriptor_set_layout_t *>(layouts[i]) };
         auto descriptor_set = new descriptor_set_t;
 
         // TODO: precompute once
-        auto num_cbv_srv_uav { 0 };
-        auto num_sampler { 0 };
+        auto num_cbv_srv_uav { 0u };
+        auto num_sampler { 0u };
         for (auto const& binding : layout->layouts) {
             switch (binding.type) {
                 case VK_DESCRIPTOR_TYPE_SAMPLER: {
@@ -2974,12 +2981,16 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(
         auto [descriptor_cpu_cbv_srv_uav, descriptor_gpu_cbv_srv_uav] = descriptor_cbv_srv_uav;
         auto [descriptor_cpu_sampler, descriptor_gpu_sampler] = descriptor_sampler;
 
-        descriptor_set->start_cbv_srv_uav = num_cbv_srv_uav ?
-            std::optional<D3D12_GPU_DESCRIPTOR_HANDLE>(descriptor_gpu_cbv_srv_uav) :
+        descriptor_set->set_cbv_srv_uav = num_cbv_srv_uav ?
+            std::optional<descriptor_set_placed_t>({ descriptor_gpu_cbv_srv_uav }) :
             std::nullopt;
-        descriptor_set->start_sampler = num_sampler ?
-            std::optional<D3D12_GPU_DESCRIPTOR_HANDLE>(descriptor_gpu_sampler) :
+        descriptor_set->set_sampler = num_sampler ?
+            std::optional<descriptor_set_virtual_t>({ descriptor_cpu_sampler, num_sampler }) : // Samplers live in cpu heaps
             std::nullopt;
+
+        if (num_sampler) {
+            device->descriptors_gpu_sampler.assign_set(descriptor_cpu_sampler, descriptor_set);
+        }
 
         for (auto const& binding : layout->layouts) {
             descriptor_set->bindings.emplace(
@@ -2994,10 +3005,10 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(
             // advance
             switch (binding.type) {
                 case VK_DESCRIPTOR_TYPE_SAMPLER: {
-                    descriptor_cpu_sampler.ptr += binding.descriptor_count * handle_size_sampler;
+                    descriptor_cpu_sampler.ptr += binding.descriptor_count * handle_size_sampler_cpu;
                 } break;
                 case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
-                    descriptor_cpu_sampler.ptr += binding.descriptor_count * handle_size_sampler;
+                    descriptor_cpu_sampler.ptr += binding.descriptor_count * handle_size_sampler_cpu;
                     descriptor_cpu_cbv_srv_uav.ptr += binding.descriptor_count * handle_size_cbv_srv_uav;
                 } break;
                 default: {
@@ -3538,7 +3549,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateCommandBuffers(
                 command_list,
                 device,
                 device->descriptors_gpu_cbv_srv_uav.heap(),
-                device->descriptors_gpu_sampler.heap()
+                device->descriptors_gpu_sampler.cpu_heap()
             )
         };
         pCommandBuffers[i] = reinterpret_cast<VkCommandBuffer>(command_buffer);

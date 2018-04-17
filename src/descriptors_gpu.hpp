@@ -10,6 +10,7 @@
 
 #include <stdx/range.hpp>
 
+using namespace Microsoft::WRL;
 using namespace stdx;
 
 // TODO: multi-threading

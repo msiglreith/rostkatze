@@ -1,5 +1,6 @@
 #pragma once
 
+#include "descriptors_virtual.hpp"
 #include "impl.hpp"
 
 #include <shared_mutex>
@@ -341,7 +342,7 @@ public:
 
     // GPU descriptor heaps
     descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1'000'000> descriptors_gpu_cbv_srv_uav;
-    descriptors_gpu_t<D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 2048> descriptors_gpu_sampler;
+    sampler_heaps_t<2048, 1'000'000> descriptors_gpu_sampler;
 
     // Indirect execution signatures
     ComPtr<ID3D12CommandSignature> dispatch_indirect;

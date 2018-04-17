@@ -7,6 +7,7 @@
 #include <array>
 #include <map>
 #include <optional>
+#include <set>
 #include <shared_mutex>
 #include <variant>
 #include <vector>
@@ -167,7 +168,7 @@ public:
             adapter->GetDesc3(&adapter_desc);
 
             physical_device_properties_t properties {
-                VK_MAKE_VERSION(2, 0, 68), // TODO: 2.0 for debugging?
+                VK_MAKE_VERSION(1, 1, 0),
                 0,
                 adapter_desc.VendorId,
                 adapter_desc.DeviceId,
@@ -356,6 +357,8 @@ public:
             limits.maxComputeSharedMemorySize = D3D12_CS_THREAD_LOCAL_TEMP_REGISTER_POOL;
             // TODO: missing fields
             limits.maxSamplerAnisotropy = 16;
+            // TODO: missing fields
+            limits.minUniformBufferOffsetAlignment = 256;
             // TODO: missing fields
             limits.framebufferColorSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT; // TODO
             limits.framebufferDepthSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT; // TODO
@@ -553,6 +556,20 @@ struct descriptor_set_layout_t {
     std::vector<binding_t> layouts;
 };
 
+/// CbvSrvUav placed descriptor sets
+struct descriptor_set_placed_t {
+    // A descriptor sets is a subslice fo a descriptor pool.
+    // Needed when binding descriptor sets.
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu_start;
+};
+
+/// Sampler virtual descriptor set (dynamic gpu heap placement)
+struct descriptor_set_virtual_t {
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle;
+    UINT num_descriptors; // Required for uploading
+    std::set<size_t> heaps_placed;
+};
+
 struct descriptor_set_t {
     using binding_index = size_t;
 
@@ -562,12 +579,10 @@ struct descriptor_set_t {
         size_t num_descriptors;
     };
 
-    // A descriptor sets is a subslice fo a descriptor pool.
-    // Needed when binding descriptor sets.
-    std::optional<D3D12_GPU_DESCRIPTOR_HANDLE> start_cbv_srv_uav;
-    std::optional<D3D12_GPU_DESCRIPTOR_HANDLE> start_sampler;
+    std::optional<descriptor_set_placed_t> set_cbv_srv_uav;
+    std::optional<descriptor_set_virtual_t> set_sampler;
 
-    // Each binding of the descriptor set is again as slice of the descriptor set slice.
+    // Each binding of the descriptor set is again a slice of the descriptor set slice.
     // Needed for updating descriptor sets.
     std::map<binding_index, binding_t> bindings;
 };

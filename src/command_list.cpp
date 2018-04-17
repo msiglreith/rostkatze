@@ -1,4 +1,9 @@
+#include <stdx/match.hpp>
+
 #include "command_list.hpp"
+
+
+using namespace stdx;
 
 VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
     VkCommandBuffer                             _commandBuffer,
@@ -15,10 +20,13 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
         case VK_PIPELINE_BIND_POINT_GRAPHICS: {
             if (!command_buffer->active_slot) {
                 std::array<ID3D12DescriptorHeap *const, 2> heaps {
-                    command_buffer->heap_cbv_srv_uav,
-                    command_buffer->heap_sampler
+                    command_buffer->heap_gpu_cbv_srv_uav,
+                    command_buffer->heap_gpu_sampler
                 };
-                command_buffer->command_recorder.cmd_set_descriptor_heaps(2, &heaps[0]);
+                command_buffer->command_recorder.cmd_set_descriptor_heaps(
+                    command_buffer->heap_gpu_sampler ? 2 : 1,
+                    &heaps[0]
+                );
                 command_buffer->active_slot = command_buffer_t::SLOT_GRAPHICS;
             }
 
@@ -78,10 +86,13 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(
         case VK_PIPELINE_BIND_POINT_COMPUTE: {
             if (!command_buffer->active_slot) {
                 std::array<ID3D12DescriptorHeap *const, 2> heaps {
-                    command_buffer->heap_cbv_srv_uav,
-                    command_buffer->heap_sampler
+                    command_buffer->heap_gpu_cbv_srv_uav,
+                    command_buffer->heap_gpu_sampler
                 };
-                command_buffer->command_recorder.cmd_set_descriptor_heaps(2, &heaps[0]);
+                command_buffer->command_recorder.cmd_set_descriptor_heaps(
+                    command_buffer->heap_gpu_sampler ? 2 : 1,
+                    &heaps[0]
+                );
                 command_buffer->active_slot = command_buffer_t::SLOT_COMPUTE;
             }
 
@@ -241,17 +252,20 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(
 ) {
     TRACE("vkCmdBindDescriptorSets");
 
-    // TODO: dynamic
+    // TODO: dynamic descriptors
 
     auto descriptor_sets { span<const VkDescriptorSet>(pDescriptorSets, descriptorSetCount) };
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
     auto layout { reinterpret_cast<pipeline_layout_t *>(_layout) };
 
+    // CbvSrvUav descriptors have a fixed heap, we want to store only the offset to this heap
     const auto start_cbv_srv_uav {
-        command_buffer->heap_cbv_srv_uav->GetGPUDescriptorHandleForHeapStart()
+        command_buffer->heap_gpu_cbv_srv_uav->GetGPUDescriptorHandleForHeapStart()
     };
+    // Samplers live in a non-shader visible heap due to the size limitations.
+    // We store the offset to the fixed size cpu heap and replace them on draw/dispatch.
     const auto start_sampler {
-        command_buffer->heap_sampler->GetGPUDescriptorHandleForHeapStart()
+        command_buffer->heap_cpu_sampler->GetCPUDescriptorHandleForHeapStart()
     };
 
     auto bind_descriptor_set = [&] (command_buffer_t::pipeline_slot_t& pipeline) {
@@ -271,18 +285,16 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(
             auto set { reinterpret_cast<descriptor_set_t *>(descriptor_sets[i]) };
             auto const& table { layout->tables[firstSet+i] };
 
-            if (set->start_cbv_srv_uav) {
+            if (set->set_cbv_srv_uav) {
                 // Only storing relative address, less storage needed
-                const auto set_offset { set->start_cbv_srv_uav->ptr - start_cbv_srv_uav.ptr };
+                const auto set_offset { set->set_cbv_srv_uav->gpu_start.ptr - start_cbv_srv_uav.ptr };
                 pipeline.root_data.set_cbv_srv_uav(entry, static_cast<uint32_t>(set_offset));
-
                 entry += 1;
             }
-            if (set->start_sampler) {
-                // Only storing relative address, less storage needed
-                const auto set_offset { set->start_sampler->ptr - start_sampler.ptr };
+            if (set->set_sampler) {
+                // Only storing relative address to the CPU heap, less storage needed
+                const auto set_offset { set->set_sampler->cpu_handle.ptr - start_sampler.ptr };
                 pipeline.root_data.set_sampler(entry, static_cast<uint32_t>(set_offset));
-
                 entry += 1;
             }
         }
