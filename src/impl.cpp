@@ -47,8 +47,11 @@ auto saturated_add(uint64_t x, uint64_t y) -> uint64_t {
     }
 }
 
-static const size_t PUSH_CONSTANT_REGISTER_SPACE = 0;
-static const size_t DESCRIPTOR_TABLE_INITIAL_SPACE = 1;
+enum root_signature_spaces {
+    PUSH_CONSTANT_REGISTER_SPACE = 0,
+    DYNAMIC_OFFSET_SPACE,
+    DESCRIPTOR_TABLE_INITIAL_SPACE,
+};
 
 static const char* copy_buffer_to_image_cs = R"(
 ByteAddressBuffer src : register(t0);
@@ -2580,11 +2583,33 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineLayout(
         num_root_constants += push_constant.size / 4;
     }
 
-    auto num_descriptor_ranges { 0 };
+    // Collect number of specified descriptor tables and dynamic offset root constants
+    // in the create root signature
+    auto num_descriptor_ranges { 0u };
+    auto num_dynamic_offsets { 0u };
     for (auto const& _set : set_layouts) {
         auto set { reinterpret_cast<descriptor_set_layout_t *>(_set) };
         for (auto const& layout : set->layouts) {
             num_descriptor_ranges += layout.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ? 2 : 1;
+
+            if (
+                layout.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC ||
+                layout.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC
+            ) {
+                // Dynamic buffers have an additional root constant containing the dynamic offset
+                D3D12_ROOT_PARAMETER parameter {
+                    D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS,
+                    { },
+                    D3D12_SHADER_VISIBILITY_ALL // TODO
+                };
+                parameter.Constants = D3D12_ROOT_CONSTANTS {
+                    num_dynamic_offsets,
+                    DYNAMIC_OFFSET_SPACE,
+                    layout.descriptor_count
+                };
+
+                num_dynamic_offsets += layout.descriptor_count;
+            }
         }
     };
 
@@ -2605,9 +2630,14 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineLayout(
                 case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: type = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; break;
                 case VK_DESCRIPTOR_TYPE_SAMPLER: type = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER; break;
                 case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+                case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
                 case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-                    type = D3D12_DESCRIPTOR_RANGE_TYPE_UAV; break;
-                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER: type = D3D12_DESCRIPTOR_RANGE_TYPE_CBV; break;
+                    type = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+                    break;
+                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+                    type = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+                    break;
                 case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
                     type = is_sampler ?
                         D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER :
@@ -2715,6 +2745,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineLayout(
             tables,
             root_constants,
             num_root_constants,
+            num_dynamic_offsets,
             parameters.size()
         }
     );
@@ -3175,7 +3206,8 @@ VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(
                         array_elem += 1;
                     }
                 } break;
-                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER: {
+                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC: {
                     auto buffer_views { span<const VkDescriptorBufferInfo>(write.pBufferInfo, write.descriptorCount) };
                     for (auto i : range(write.descriptorCount)) {
                         auto const& view { buffer_views[i] };
@@ -3222,7 +3254,8 @@ VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(
                         array_elem += 1;
                     }
                 } break;
-                case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: {
+                case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+                case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: {
                     auto buffer_views { span<const VkDescriptorBufferInfo>(write.pBufferInfo, write.descriptorCount) };
                     for (auto i : range(write.descriptorCount)) {
                         auto const& view { buffer_views[i] };

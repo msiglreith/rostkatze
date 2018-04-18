@@ -44,6 +44,18 @@ struct image_view_t;
 
 static const size_t MAX_VERTEX_BUFFER_SLOTS = 16;
 
+// Separation of the 64 root signature entries:
+//
+// * 32 for push constants
+// * 8 for dynamic uniform buffer offsets
+// * 4 for dynamic storage buffer offsets
+// * 8 for cbv/srv/uav descriptor tables
+// * 8 for sampler descriptor tables
+static const size_t MAX_PUSH_CONSTANTS_SIZE = 128; // 4 * 32 fields
+static const size_t MAX_UNIFORM_BUFFERS_DYNAMIC = 8;
+static const size_t MAX_STORAGE_BUFFERS_DYNAMIC = 4;
+static const size_t MAX_BUFFERS_DYNAMIC = MAX_UNIFORM_BUFFERS_DYNAMIC + MAX_STORAGE_BUFFERS_DYNAMIC;
+
 enum queue_family {
     QUEUE_FAMILY_GENERAL_PRESENT = 0,
     QUEUE_FAMILY_GENERAL,
@@ -352,7 +364,7 @@ public:
             limits.maxImageDimension3D = D3D12_REQ_TEXTURE3D_U_V_OR_W_DIMENSION;
             limits.maxImageDimensionCube = D3D12_REQ_TEXTURECUBE_DIMENSION;
             // TODO: missing fields
-            limits.maxPushConstantsSize = 4 * D3D12_MAX_ROOT_COST;
+            limits.maxPushConstantsSize = MAX_PUSH_CONSTANTS_SIZE;
             // TODO: missing fields
             limits.maxComputeSharedMemorySize = D3D12_CS_THREAD_LOCAL_TEMP_REGISTER_POOL;
             // TODO: missing fields
@@ -646,7 +658,8 @@ struct pipeline_layout_t {
     ComPtr<ID3D12RootSignature> signature;
     std::vector<uint32_t> tables; // root_table_flags
     std::vector<VkPushConstantRange> root_constants;
-    size_t num_root_constants; // Number of root constants (32bit)
+    size_t num_root_constants; // Number of root constants (32bit) used for push constants
+    size_t num_dynamic_offsets;
     size_t num_signature_entries;
 };
 

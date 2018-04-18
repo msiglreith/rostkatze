@@ -252,9 +252,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(
 ) {
     TRACE("vkCmdBindDescriptorSets");
 
-    // TODO: dynamic descriptors
-
     auto descriptor_sets { span<const VkDescriptorSet>(pDescriptorSets, descriptorSetCount) };
+    auto dynamic_offsets { span<const uint32_t>(pDynamicOffsets, dynamicOffsetCount) };
     auto command_buffer { reinterpret_cast<command_buffer_t *>(_commandBuffer) };
     auto layout { reinterpret_cast<pipeline_layout_t *>(_layout) };
 
