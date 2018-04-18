@@ -174,7 +174,9 @@ public:
         };
 
         const auto num_root_constant_entries { slot.pipeline->root_constants.size() };
-        const auto num_table_entries { slot.pipeline->num_signature_entries };
+        const auto num_dynamic_offsets { slot.pipeline->num_dynamic_offsets };
+        const auto num_table_entries { slot.pipeline->num_signature_entries - num_root_constant_entries - num_dynamic_offsets };
+        const auto descriptor_table_start_slot { slot.pipeline->num_root_constants + num_dynamic_offsets };
 
         auto start_constant { 0u };
         for (auto i : range(num_root_constant_entries)) {
@@ -196,7 +198,7 @@ public:
 
         std::bitset<D3D12_MAX_ROOT_COST> active_sampler_sets { 0 };
         for (auto i : range(num_table_entries)) {
-            const auto data_slot { slot.pipeline->num_root_constants + i };
+            const auto data_slot { descriptor_table_start_slot + i };
             if (!user_data.dirty[data_slot]) {
                 continue;
             }
@@ -218,7 +220,7 @@ public:
                     continue;
                 }
 
-                auto const data_slot { slot.pipeline->num_root_constants + i };
+                auto const data_slot { descriptor_table_start_slot + i };
                 auto const offset { user_data.data[data_slot] };
                 auto const handle { D3D12_CPU_DESCRIPTOR_HANDLE { start_cpu_sampler.ptr + offset } };
 
@@ -259,7 +261,7 @@ public:
                     continue;
                 }
 
-                auto const data_slot { slot.pipeline->num_root_constants + i };
+                auto const data_slot { descriptor_table_start_slot + i };
                 auto const offset { user_data.data[data_slot] };
                 auto const cpu_handle { D3D12_CPU_DESCRIPTOR_HANDLE { start_cpu_sampler.ptr + offset } };
 
@@ -302,7 +304,7 @@ public:
         }
 
         for (auto i : range(num_table_entries)) {
-            const auto data_slot { slot.pipeline->num_root_constants + i };
+            const auto data_slot { descriptor_table_start_slot + i };
             if (!user_data.dirty[data_slot]) {
                 continue;
             }

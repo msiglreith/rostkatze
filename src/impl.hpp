@@ -731,6 +731,7 @@ struct pipeline_t {
         signature { nullptr },
         num_signature_entries { 0 },
         num_root_constants { 0 },
+        num_dynamic_offsets { 0 },
         dynamic_states { 0 },
         static_viewports { std::nullopt },
         static_scissors { std::nullopt },
@@ -782,7 +783,8 @@ struct pipeline_t {
     ID3D12RootSignature* signature;
 
     size_t num_signature_entries;
-    size_t num_root_constants; // Number of root constants (32bit) in the root signature
+    size_t num_root_constants; // Number of root constants (32bit) in the root signature for push constants
+    size_t num_dynamic_offsets;
     std::vector<VkPushConstantRange> root_constants;
 
     // Graphics only

@@ -171,6 +171,10 @@ auto translate_spirv (
             auto set { compiler.get_decoration(image.id, spv::Decoration::DecorationDescriptorSet) };
             compiler.set_decoration(image.id, spv::Decoration::DecorationDescriptorSet, DESCRIPTOR_TABLE_INITIAL_SPACE + 2 * set);
         }
+        for (auto const& input : shader_resources.subpass_inputs) {
+            auto set { compiler.get_decoration(input.id, spv::Decoration::DecorationDescriptorSet) };
+            compiler.set_decoration(input.id, spv::Decoration::DecorationDescriptorSet, DESCRIPTOR_TABLE_INITIAL_SPACE + 2 * set);
+        }
         for (auto const& uniform_buffer : shader_resources.uniform_buffers) {
             auto set { compiler.get_decoration(uniform_buffer.id, spv::Decoration::DecorationDescriptorSet) };
             compiler.set_decoration(uniform_buffer.id, spv::Decoration::DecorationDescriptorSet, DESCRIPTOR_TABLE_INITIAL_SPACE + 2 * set);
@@ -2473,6 +2477,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         pipeline->num_signature_entries = layout->num_signature_entries;
         pipeline->root_constants = layout->root_constants;
         pipeline->num_root_constants = layout->num_root_constants;
+        pipeline->num_dynamic_offsets = layout->num_dynamic_offsets;
         pipeline->vertex_strides = strides;
         pipeline->topology = topology;
         pPipelines[i] = reinterpret_cast<VkPipeline>(pipeline);
@@ -2529,6 +2534,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateComputePipelines(
         pipeline->num_signature_entries = layout->num_signature_entries;
         pipeline->root_constants = layout->root_constants;
         pipeline->num_root_constants = layout->num_root_constants;
+        pipeline->num_dynamic_offsets = layout->num_dynamic_offsets;
         pPipelines[i] = reinterpret_cast<VkPipeline>(pipeline);
     }
 
@@ -2627,7 +2633,10 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineLayout(
         auto descriptor_range = [] (descriptor_set_layout_t::binding_t const& binding, uint32_t space, bool is_sampler) {
             auto type { D3D12_DESCRIPTOR_RANGE_TYPE_SRV };
             switch (binding.type) {
-                case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: type = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; break;
+                case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+                case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+                    type = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+                    break;
                 case VK_DESCRIPTOR_TYPE_SAMPLER: type = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER; break;
                 case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
                 case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:

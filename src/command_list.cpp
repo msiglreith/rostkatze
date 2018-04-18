@@ -269,7 +269,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(
 
     auto bind_descriptor_set = [&] (command_buffer_t::pipeline_slot_t& pipeline) {
         // Find the table entry corresponding with `first_set`
-        auto entry { layout->num_root_constants };
+        auto entry { layout->num_root_constants + layout->num_dynamic_offsets };
         for (auto i : range(firstSet)) {
             const auto entry_type { layout->tables[i] };
             if (entry_type & TABLE_CBV_SRV_UAV) {
